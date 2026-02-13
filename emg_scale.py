@@ -45,8 +45,14 @@ class EMGScaleManager:
         # 중앙점 좌표 계산 
         base_offset = (config.N_CH - 1 - ch_idx) * config.CH_OFFSET + (config.CH_OFFSET / 2)
 
+        # 신호 없음(0 근처)일 때는 RAW_ZERO_REF(100) 위치의 Y에 표시
+        effective_raw = np.where(
+            np.abs(raw_array) <= config.RAW_ZERO_THRESHOLD,
+            config.RAW_ZERO_REF,
+            raw_array,
+        )
         # (현재값 - 기준점) / (전체 범위의 절반)
-        ratios = (raw_array - scaler.baseline) / (data_range / 2)
+        ratios = (effective_raw - scaler.baseline) / (data_range / 2)
         ratios = np.clip(ratios, -1.0, 1.0)
         return base_offset + (ratios * allowed_half_height)
 

@@ -196,9 +196,3 @@ def update_power_info(win):
     avg_pct = float(np.mean(ratios) * 100.0)
     avg_pct = np.clip(avg_pct, 0, 100)
     win.bar_item.setOpts(height=list(height_pct) + [avg_pct])
-    win.lbl_rawnums.setText(
-        f"RAW: {win.last_raw}"
-    )
-    win.lbl_pwr.setText(
-        f"AMP: {[round(float(a), 1) for a in win.last_amp]}  비율(%): {[round(float(h), 0) for h in height_pct]}  AVG={avg_pct:.0f}%"
-    )

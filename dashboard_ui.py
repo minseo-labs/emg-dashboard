@@ -165,7 +165,6 @@ class EMGDashboard(QMainWindow):
         frame, lay = self.card("RAW GRAPH (Dynamic Auto-Scaling)")
         self.raw_lines = []
         self.bar_items = []
-        self.lbl_rawnums = QLabel("RAW: [0,0,0,0]")
 
         header_layout = QHBoxLayout()
         if lay.count() > 0:
@@ -220,7 +219,6 @@ class EMGDashboard(QMainWindow):
             bar.setVisible(False)
 
         lay.addWidget(self.raw_plot, 1)
-        lay.addWidget(self.lbl_rawnums)
         return frame
 
     def build_diag_panel(self):
@@ -262,8 +260,6 @@ class EMGDashboard(QMainWindow):
         )
         self.pwr_plot.addItem(self.bar_item)
         lay.addWidget(self.pwr_plot, 1)
-        self.lbl_pwr = QLabel("AMP: [0,0,0,0]  AVG=0.0")
-        lay.addWidget(self.lbl_pwr)
         return frame
 
     def render(self):

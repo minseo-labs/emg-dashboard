@@ -12,6 +12,9 @@ N_MULT_DEFAULT = 10
 CH_OFFSET = 100
 RAW_Y_MIN_INIT = 10
 RAW_Y_MAX_INIT = 100
+# 신호 없음(0)
+RAW_ZERO_REF = 100
+RAW_ZERO_THRESHOLD = 1.0  # 이 값 이하면 "신호 없음"으로 간주
 
 # [디자인 설정]
 RAW_LINE_WIDTH = 1.6
