@@ -10,13 +10,13 @@ ENABLE_CSV_LOGGING = True
 BASE_SAMPLES = 5
 N_MULT_DEFAULT = 10
 
-# [RAW 그래프 스케일·레이아웃]
+# [RAW 그래프 스케일]
 CH_OFFSET = 100
 RAW_Y_MIN_INIT = 55
 RAW_Y_MAX_INIT = 100
-# 신호 없음(0)
 RAW_ZERO_REF = 100
 RAW_ZERO_THRESHOLD = 1.0
+NO_SIGNAL_VARIATION_RAW = 1.0  # Bar 모드: 구간 변동폭 이하면 신호 없음(최소 높이)
 
 # [디자인 설정]
 RAW_LINE_WIDTH = 1.6
@@ -36,6 +36,7 @@ CH_COLORS = [
 CH_4_INDICES = (0, 1, 3, 4)
 
 
+# 채널별 인덱스 색상 반환 
 def get_ch_color(ch_idx):
     idx = CH_4_INDICES[ch_idx] if N_CH == 4 else ch_idx
     return CH_COLORS[idx]

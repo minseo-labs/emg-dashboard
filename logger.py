@@ -1,3 +1,10 @@
+"""
+CSV 데이터 로깅 모듈.
+
+- 연결 시작 시 data/ 폴더에 YYYYMMDD_HHMMSS_emg.csv 생성
+- write_row: raw·amp 행 버퍼에 추가. buffer_size 도달 시 writerows 일괄 기록
+- flush: 버퍼 내용 디스크 기록, I/O 횟수 감소
+"""
 import csv
 import os
 import time
@@ -7,6 +14,8 @@ import config
 
 
 class CSVLogger:
+    """시리얼 raw·amp 데이터를 CSV로 저장. 버퍼링으로 I/O 횟수 감소."""
+
     def __init__(self, directory="data", buffer_size=600):
         """
         데이터 저장 시스템 초기화

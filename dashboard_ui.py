@@ -1,4 +1,9 @@
-"""EMG Dashboard 메인 윈도우 및 패널 빌더."""
+"""
+EMG Dashboard 메인 윈도우 및 패널 빌더.
+
+- EMGDashboard: QMainWindow 기반. SETTINGS, RAW, Diagonal Vector, PWR 패널.
+- 시리얼 연결·해제, 4ch/6ch 전환, QTimer 렌더 루프, on_sample 데이터 처리.
+"""
 import time
 import numpy as np
 import serial.tools.list_ports
@@ -29,6 +34,8 @@ from graph_render import render as render_impl
 
 
 class EMGDashboard(QMainWindow):
+    """메인 윈도우. SETTINGS(포트·시작·중지·채널), RAW/Diagonal/PWR 패널, SerialWorker 연동."""
+
     def __init__(self):
         super().__init__()
         pg.setConfigOptions(antialias=True, useOpenGL=True)
@@ -38,7 +45,7 @@ class EMGDashboard(QMainWindow):
         self.scale_manager = EMGScaleManager(n_channels=config.N_CH)
         self.n_mult = int(N_MULT_DEFAULT)
 
-        self.max_display = 5000
+        self.max_display = 5000  # RAW 시계열 링 버퍼 길이
         self.raw_np_buf = np.zeros((config.N_CH, self.max_display))
         self.x_axis = np.linspace(0, PLOT_SEC * 1000, self.max_display)
 
@@ -52,7 +59,7 @@ class EMGDashboard(QMainWindow):
             self.raw_plot.addItem(rect)
             self.cursor_rects.append(rect)
 
-        self.ptr = 0
+        self.ptr = 0           # 링 버퍼 쓰기 인덱스
         self.is_buf_full = False
         self.sample_count = 0
         self.last_amp = np.zeros(config.N_CH, dtype=float)
@@ -75,8 +82,8 @@ class EMGDashboard(QMainWindow):
         self.height_buf = np.zeros((config.N_CH, self.max_display))
         self.height_buf.fill(1.5)
 
-    # 프로그램 start/stop 상태에 따른 중복 실행 및 충돌 방지 
     def set_running_ui(self, running: bool):
+        """연결 중이면 START·포트·Refresh·Window Size·Channels 비활성화, STOP만 활성화."""
         self.btn_start.setEnabled(not running)
         self.btn_stop.setEnabled(running)
         self.cb_port.setEnabled(not running)
@@ -86,6 +93,7 @@ class EMGDashboard(QMainWindow):
         self.is_running = running
 
     def on_channels_changed(self, index):
+        """Channels 콤보 변경. 연결 중이면 무시하고 원래값 복원. 해제 후 4ch/6ch 전환 가능."""
         if self.is_running:
             QMessageBox.warning(
                 self, "모드 변경",
@@ -181,6 +189,7 @@ class EMGDashboard(QMainWindow):
         self.worker.sig_error.connect(self.on_error)
 
     def card(self, title: str):
+        """스타일 적용된 카드 프레임 반환. QFrame + QVBoxLayout + 제목 라벨."""
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame { background: #121826; border: 1px solid #2a3550; border-radius: 12px; }
@@ -199,6 +208,7 @@ class EMGDashboard(QMainWindow):
         return frame, lay
 
     def init_ui(self):
+        """중앙 위젯에 SETTINGS·RAW·Diagonal·PWR 패널 배치. 좌측 SETTINGS+Diagonal, 우측 RAW+PWR."""
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central)
@@ -222,6 +232,7 @@ class EMGDashboard(QMainWindow):
         main_layout.addLayout(right_container, 2)
 
     def build_settings_panel(self):
+        """포트·Refresh·START·STOP·Window Size·Channels 콤보·상태 라벨 패널 빌드."""
         frame, lay = self.card("SETTINGS & MODE")
         lay.setSpacing(15)
         row_port = QHBoxLayout()
@@ -274,6 +285,7 @@ class EMGDashboard(QMainWindow):
         return frame
 
     def build_raw_plot_panel(self):
+        """RAW 시계열 PlotWidget. Line/Fill 라디오, past_lines·raw_lines·bar_items 생성."""
         frame, lay = self.card("RAW GRAPH (Dynamic Auto-Scaling)")
         self.raw_lines = []
         self.bar_items = []
@@ -334,6 +346,7 @@ class EMGDashboard(QMainWindow):
         return frame
 
     def build_diag_panel(self):
+        """Diagonal Vector PlotWidget. aspect locked, 가이드선, diag_lines N개."""
         frame, lay = self.card("Diagonal Vector")
         self.diag_plot = pg.PlotWidget()
         self.diag_plot.setBackground(COLOR_BG)
@@ -356,14 +369,21 @@ class EMGDashboard(QMainWindow):
         return frame
 
     def build_pwr_panel(self):
+
         frame, lay = self.card("PWR BARS")
         self.pwr_plot = pg.PlotWidget()
         self.pwr_plot.setBackground(COLOR_BG)
+
+        # y축 범위 고정 
         self.pwr_plot.setYRange(0, 110, padding=0)
         self.pwr_plot.enableAutoRange(axis="y", enable=False)
+
+        # x축 라벨 설정 
         x_axis = self.pwr_plot.getAxis("bottom")
         ticks = [(i, f"CH{i}") for i in range(config.N_CH)] + [(config.N_CH, "AVG")]
         x_axis.setTicks([ticks])
+
+        # 막대 그래프 생성 
         self.bar_item = pg.BarGraphItem(
             x=np.arange(config.N_CH + 1),
             height=[0] * (config.N_CH + 1),
@@ -374,10 +394,12 @@ class EMGDashboard(QMainWindow):
         lay.addWidget(self.pwr_plot, 1)
         return frame
 
+    # QTimer 콜백하면 graph_render.render(self) 호출
     def render(self):
         render_impl(self)
 
     def on_sample(self, raw_vals, amp_vals):
+        """SerialWorker sig_sample 수신. raw 링버퍼·scale_manager·CSV 기록 처리."""
         if not self.is_running:
             return
             
@@ -388,17 +410,19 @@ class EMGDashboard(QMainWindow):
         for i in range(config.N_CH):
             self.scale_manager.scalers[i].update(raw_vals[i])
         self.ptr += 1
-        if self.ptr >= self.max_display:
+        if self.ptr >= self.max_display:  # 링 버퍼 순환
             self.ptr = 0
             self.is_buf_full = True
         if self.csv_logger:
             self.csv_logger.write_row(raw_vals, amp_vals, timestamp=curr_ts_ms)
 
     def refresh_ports(self):
+        """시리얼 포트 목록 갱신. pyserial list_ports 사용."""
         self.cb_port.clear()
         self.cb_port.addItems([p.device for p in serial.tools.list_ports.comports()])
 
     def start_serial(self):
+        """포트 연결·버퍼 초기화·CSV 로거 생성·SerialWorker 시작·set_running_ui(True)."""
         port = self.cb_port.currentText().strip()
         if not port:
             return
@@ -426,6 +450,7 @@ class EMGDashboard(QMainWindow):
         self.set_running_ui(True)
 
     def stop_serial(self):
+        """SerialWorker 중지·CSV 로거 close·set_running_ui(False)."""
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(500)
@@ -435,15 +460,18 @@ class EMGDashboard(QMainWindow):
         self.set_running_ui(False)
 
     def set_status(self, txt):
+        """상태 라벨 업데이트. CONNECTED/DISCONNECTED에 따라 색상 변경."""
         self.lbl_status.setText(f"● {txt}")
         self.lbl_status.setStyleSheet(
             f"color:{COLOR_STATUS_CONNECTED if 'CONNECTED' in txt else COLOR_STATUS_DISCONNECTED}; font-weight:800;"
         )
 
     def on_error(self, msg):
+        """SerialWorker sig_error 수신. 메시지 박스 표시 후 stop_serial 호출."""
         QMessageBox.critical(self, "Error", msg)
         self.stop_serial()
 
     def closeEvent(self, event):
+        """윈도우 종료 시 stop_serial로 연결 정리 후 이벤트 수락."""
         self.stop_serial()
         event.accept()
