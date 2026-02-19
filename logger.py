@@ -3,6 +3,9 @@ import os
 import time
 from datetime import datetime
 
+import config
+
+
 class CSVLogger:
     def __init__(self, directory="data", buffer_size=600):
         """
@@ -28,11 +31,12 @@ class CSVLogger:
         self._header_written = False # 헤더 중복 작성 방지 플래그
 
     def _write_header(self):
-        self.writer.writerow([
-            'Time(ms)', 
-            'Raw_CH0', 'Raw_CH1', 'Raw_CH2', 'Raw_CH3',
-            'Amp_CH0', 'Amp_CH1', 'Amp_CH2', 'Amp_CH3'
-        ])
+        header = (
+            ['Time(ms)']
+            + [f'Raw_CH{i}' for i in range(config.N_CH)]
+            + [f'Amp_CH{i}' for i in range(config.N_CH)]
+        )
+        self.writer.writerow(header)
         self._header_written = True
 
     def write_row(self, raw_vals, amp_vals, timestamp=None):

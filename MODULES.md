@@ -78,9 +78,9 @@
 
 ### RAW 그래프 (Bar 모드)
 
-- **적용:** 구간(step=30)마다 `ch_max - ch_min`으로 "변동폭"을 구한 뒤, `BAR_HEIGHT_REF_RAW`(100)에 대한 비율로 막대 높이 계산. `max_bar_pixels`(채널 밴드 높이)에 비율을 곱해 픽셀 높이로 변환.
-- **스케일 기준:** Bar 높이는 **고정 참조 100** 기준 비율이라, RAW 그래프 Line과는 별개. 채널별로 "최근 구간에서의 변동폭"이 크면 막대가 높게, 작으면 낮게 보임.
-- **Y 위치:** 막대는 `base_offset ± (height/2)`에 세움. 데이터 범위는 **Bar 높이**에만 반영되고, 채널 밴드의 세로 위치는 고정.
+- **적용:** 구간(step=30)마다 `ch_max - ch_min`으로 변동폭을 구한 뒤, **Line 모드와 동일한 `data_range/2`** 기준 비율로 막대 높이 계산. `ratio = min(bar_height_raw / half_range, 1.0)`.
+- **스케일 기준:** Line과 **동일한 공통 data_range** 사용 → 채널 간 비교 일치. 같은 raw 변동폭이 Line·Bar 모두 같은 세로 비율로 표시됨.
+- **Y 위치:** 막대는 `base_offset ± (height/2)`에 세움.
 
 ### Diagonal Vector (대각선 벡터)
 
@@ -130,9 +130,9 @@
 
 - **윈도우:** `EMGDashboard` (QMainWindow), 레이아웃·카드 스타일
 - **패널 구성:**
-  - **SETTINGS & MODE:** 포트 선택, START/STOP, Window Size(SpinBox), 연결 상태 표시
+  - **SETTINGS & MODE:** 포트 선택, START/STOP, Window Size(SpinBox), Channels(4ch/6ch), 연결 상태 표시
   - **RAW GRAPH:** 라인/바 모드 선택, pyqtgraph PlotWidget, 채널별 라인·막대·커서
-  - **Diagonal Vector:** 대각선 방향 벡터 플롯 (4채널)
+  - **Diagonal Vector:** 대각선 방향 벡터 플롯 (N_CH)
   - **PWR BARS:** 채널별 AMP 막대(비율) + AVG
 - **데이터 흐름:**
   - `SerialWorker.sig_sample` → `on_sample()`: raw/amp 수신, 버퍼·스케일러 갱신, CSV 기록
@@ -148,8 +148,8 @@
 
 - **프로토콜:** 23 bytes/프레임 (헤더 2 + 데이터 20 + 체크섬 1 XOR). 상세는 [시리얼 프로토콜](#시리얼-프로토콜-프레임-23-bytes) 참고.
 - **시리얼:** 지정 포트로 열고, `in_waiting` 기준으로 데이터 읽기 (줄 단위 또는 23바이트 프레임 단위 파싱)
-- **파싱:** `parse_line_4ch(line)` — 한 줄에서 숫자 추출, 마지막 4개를 float 리스트로 반환 (4ch 가정). 이진 23바이트 프레임 파싱은 프로토콜에 맞게 구현 가능.
-- **진폭:** `compute_amp_from_samples(sample_buf)` — 최근 N개 샘플의 채널별 (max−min)을 AMP로 계산
+- **파싱:** `parse_line_4ch(line)` — 한 줄에서 숫자 추출, 마지막 N_CH개를 float 리스트로 반환 (config.N_CH에 따라 4ch 또는 6ch).
+- **진폭:** `compute_amp_from_samples(sample_buf)` — 최근 N개 샘플의 채널별 (max−min)을 AMP 배열로 반환
 - **윈도우:** `n_mult`로 `n_samples = BASE_SAMPLES * n_mult` 결정, `sample_buf`(deque)에 샘플 누적 후 `n_samples`개 모이면 AMP 계산
 - **시그널:** `sig_sample.emit(raw_vals, last_amp)` — UI에 raw·amp 전달, `sig_status` / `sig_error` — 연결 상태·에러
 
@@ -161,9 +161,9 @@
 
 **역할:** 화면에 그리기 (RAW 그래프, 대각선 벡터, PWR 막대)
 
-- **render(win):** `win.is_running`·샘플 유무 확인 후, RAW / 대각선 벡터 / PWR 업데이트 함수 호출
+- **render(win):** `win.is_running`·샘플 유무 확인 후, `unified_x_ms = win.x_axis[win.ptr % win.max_display]`, RAW / 대각선 벡터 / PWR 업데이트
 - **update_raw_graph(win, is_fill_mode, unified_x_ms):**
-  - 채널별 `height_buf` 계산 (구간별 max−min → BAR 높이 비율)
+  - 채널별 `height_buf` 계산 (구간별 max−min → data_range/2 기준 비율, Line과 동일 스케일)
   - **Bar 모드:** 막대 위치·높이·갭, 커서 위치
   - **Line 모드:** 과거/현재 구간 분리, `scale_manager.get_scaled_array()`로 Y 좌표 계산, 라인·커서 설정
 - **update_diag_vector(win):** 채널별 최근 100샘플로 파형·강도 계산, 대각선 방향 벡터 라인 그리기
@@ -181,7 +181,7 @@
   - `current_min` / `current_max` / `baseline` 유지 (들어오는 raw에 따라 갱신)
   - `update(raw_value)`: min/max 확장·감쇠, baseline을 (min+max)/2 쪽으로 스무딩
 - **EMGScaleManager:**
-  - `_data_range_and_half_height(ch_idx)`: **전 채널 공통** `data_range` 사용 (모든 채널의 global_min ~ global_max로 한 개의 범위 계산), `allowed_half_height` 반환. 같은 raw 변동폭이 모든 채널에서 같은 세로 크기로 보이도록 비율 기준 통일.
+  - `_data_range_and_half_height()`: **전 채널 공통** `data_range` 사용 (has_data인 채널의 global_min ~ global_max로 범위 계산), `allowed_half_height` 반환.
   - `get_scaled_array(ch_idx, raw_array)`: raw 배열 → (채널 baseline + **공통 data_range** 기준) 비율 → 화면 Y 좌표 배열
   - `get_vector_intensity(ch_idx, amp_value)`: AMP 값 → 0~1 강도 (대각선 벡터·PWR 바 비율용)
 
@@ -194,7 +194,7 @@ RAW 그래프의 "세로 위치", Bar 모드의 채널 밴드, 대각선 벡터�
 **역할:** CSV 로깅 (raw·amp·타임스탬프)
 
 - **CSVLogger:** 세션당 하나의 CSV 파일 (파일명: 날짜_시간_emg.csv)
-- **헤더:** Time(ms), Raw_CH0~3, Amp_CH0~3 (고정 4ch 가정)
+- **헤더:** Time(ms), Raw_CH0~N, Amp_CH0~N (config.N_CH 기준)
 - **write_row(raw_vals, amp_vals, timestamp):** 한 행 버퍼에 추가, 버퍼가 차면 디스크에 flush
 - **flush / close:** 버퍼 비우기, 파일 닫기
 

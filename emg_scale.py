@@ -6,15 +6,31 @@ class ChannelScaler:
         self.current_min = config.RAW_Y_MIN_INIT
         self.current_max = config.RAW_Y_MAX_INIT
         self.baseline = (self.current_min + self.current_max) / 2
+        self.has_data = False  # 실제 데이터가 들어왔는지 추적
 
         self.baseline_alpha = 0.05
         self.decay_alpha = 0.00001
 
+    def reset(self):
+        """스케일 정보를 초기 상태로 리셋"""
+        self.current_min = config.RAW_Y_MIN_INIT
+        self.current_max = config.RAW_Y_MAX_INIT
+        self.baseline = (self.current_min + self.current_max) / 2
+        self.has_data = False
+
     def update(self, raw_value):
+        # 0(센서 미인식 등)은 min/max 갱신에서 제외
+        if raw_value <= config.RAW_ZERO_THRESHOLD:
+            return
+        
+        # 실제 데이터가 들어왔음을 표시
+        self.has_data = True
+        
         if raw_value > self.current_max:
-            self.current_max = raw_value + 5
+            self.current_max = raw_value  # 더 큰 값이면 그걸로 갱신
         elif raw_value < self.current_min:
-            self.current_min = raw_value - 5
+            # 0은 이미 위에서 제외되었으므로, 실제 데이터 최소값으로 갱신
+            self.current_min = raw_value
         else:
             self.current_max -= (self.current_max - raw_value) * self.decay_alpha
             self.current_min += (raw_value - self.current_min) * self.decay_alpha
@@ -26,12 +42,25 @@ class EMGScaleManager:
     def __init__(self, n_channels=config.N_CH):
         self.scalers = [ChannelScaler() for _ in range(n_channels)]
         # 채널별 가중치 (1.0 기본)
-        self.gains = [1.0, 1.0, 1.0, 1.0]
+        self.gains = [1.0] * n_channels
 
-    # 라인/바 공통: 전 채널 공통 data_range 사용 → 같은 raw 폭이 모든 채널에서 같은 크기로 보임
-    def _data_range_and_half_height(self, ch_idx):
-        global_min = min(s.current_min for s in self.scalers)
-        global_max = max(s.current_max for s in self.scalers)
+    def reset(self):
+        """모든 채널의 스케일 정보를 초기 상태로 리셋"""
+        for scaler in self.scalers:
+            scaler.reset()
+
+    def _data_range_and_half_height(self):
+        """전 채널 공통 data_range 계산 → 채널 간 비교 용이"""
+        valid_mins = [s.current_min for s in self.scalers if s.has_data and s.current_min > 0]
+        valid_maxs = [s.current_max for s in self.scalers if s.has_data and s.current_max > 0]
+        
+        if not valid_mins or not valid_maxs:
+            global_min = config.RAW_Y_MIN_INIT
+            global_max = config.RAW_Y_MAX_INIT
+        else:
+            global_min = min(valid_mins)
+            global_max = max(valid_maxs)
+        
         data_range = max(global_max - global_min, 20)
         safe_margin_factor = 0.85
         allowed_half_height = (config.CH_OFFSET / 2) * safe_margin_factor
@@ -40,20 +69,22 @@ class EMGScaleManager:
     def get_scaled_array(self, ch_idx, raw_array):
 
         scaler = self.scalers[ch_idx]
-        data_range, allowed_half_height = self._data_range_and_half_height(ch_idx)
+        data_range, allowed_half_height = self._data_range_and_half_height()
         
         # 중앙점 좌표 계산 
         base_offset = (config.N_CH - 1 - ch_idx) * config.CH_OFFSET + (config.CH_OFFSET / 2)
 
         # 신호 없음(0 근처)일 때는 RAW_ZERO_REF(100) 위치의 Y에 표시
         effective_raw = np.where(
-            np.abs(raw_array) <= config.RAW_ZERO_THRESHOLD,
+            raw_array <= config.RAW_ZERO_THRESHOLD,
             config.RAW_ZERO_REF,
             raw_array,
         )
-        # (현재값 - 기준점) / (전체 범위의 절반)
+
+        # 공통 data_range: 같은 raw 폭이 모든 채널에서 같은 크기로 보임 (채널 간 비교 용이)
         ratios = (effective_raw - scaler.baseline) / (data_range / 2)
         ratios = np.clip(ratios, -1.0, 1.0)
+        
         return base_offset + (ratios * allowed_half_height)
 
     def get_vector_intensity(self, ch_idx, amp_value):

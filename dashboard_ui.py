@@ -8,16 +8,17 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QFrame, QSpinBox, QMessageBox,
-    QFormLayout, QRadioButton,
+    QRadioButton,
 )
 
+import config
 from emg_scale import EMGScaleManager
 from logger import CSVLogger
 from config import (
-    N_CH, FPS, PLOT_SEC,
+    FPS, PLOT_SEC,
     N_MULT_DEFAULT,
     ENABLE_CSV_LOGGING,
-    CH_COLORS, SUM_BAR_COLOR,
+    get_ch_color, SUM_BAR_COLOR,
     CH_OFFSET,
     RAW_LINE_WIDTH,
     COLOR_BG, COLOR_CARD_BORDER,
@@ -34,19 +35,19 @@ class EMGDashboard(QMainWindow):
         self.setWindowTitle("EMG Dashboard (Real-time Monitoring)")
         self.resize(1600, 800)
 
-        self.scale_manager = EMGScaleManager(n_channels=N_CH)
+        self.scale_manager = EMGScaleManager(n_channels=config.N_CH)
         self.n_mult = int(N_MULT_DEFAULT)
 
         self.max_display = 5000
-        self.raw_np_buf = np.zeros((N_CH, self.max_display))
+        self.raw_np_buf = np.zeros((config.N_CH, self.max_display))
         self.x_axis = np.linspace(0, PLOT_SEC * 1000, self.max_display)
 
-        self.cursor_colors = ["#ffffff"] * N_CH
+        self.cursor_colors = ["#ffffff"] * config.N_CH
         self.cursor_rects = []
 
         self.init_ui()
 
-        for i in range(N_CH):
+        for i in range(config.N_CH):
             rect = pg.ScatterPlotItem(size=8, symbol="s", brush=self.cursor_colors[i])
             self.raw_plot.addItem(rect)
             self.cursor_rects.append(rect)
@@ -54,8 +55,7 @@ class EMGDashboard(QMainWindow):
         self.ptr = 0
         self.is_buf_full = False
         self.sample_count = 0
-        self.last_raw = [0] * 4
-        self.last_amp = np.zeros(N_CH, dtype=float)
+        self.last_amp = np.zeros(config.N_CH, dtype=float)
         self.is_running = False
 
         self.csv_logger = None
@@ -72,7 +72,7 @@ class EMGDashboard(QMainWindow):
         self.timer.start()
         self.refresh_ports()
 
-        self.height_buf = np.zeros((N_CH, self.max_display))
+        self.height_buf = np.zeros((config.N_CH, self.max_display))
         self.height_buf.fill(1.5)
 
     # 프로그램 start/stop 상태에 따른 중복 실행 및 충돌 방지 
@@ -82,7 +82,103 @@ class EMGDashboard(QMainWindow):
         self.cb_port.setEnabled(not running)
         self.btn_refresh.setEnabled(not running)
         self.sp_nmult.setEnabled(not running)
+        self.cb_channels.setEnabled(not running)
         self.is_running = running
+
+    def on_channels_changed(self, index):
+        if self.is_running:
+            QMessageBox.warning(
+                self, "모드 변경",
+                "연결을 끊은 후 채널 모드를 변경하세요.",
+            )
+            self.cb_channels.blockSignals(True)
+            self.cb_channels.setCurrentIndex(0 if config.N_CH == 4 else 1)
+            self.cb_channels.blockSignals(False)
+            return
+        n = 4 if index == 0 else 6
+        config.CH_MODE = n
+        config.N_CH = n
+        self.reinit_channel_mode()
+
+    def reinit_channel_mode(self):
+        """채널 수 변경 시 버퍼·플롯·스케일 등 N_CH 기준으로 재생성."""
+        n = config.N_CH
+        self.scale_manager = EMGScaleManager(n_channels=n)
+        self.raw_np_buf = np.zeros((n, self.max_display))
+        self.height_buf = np.zeros((n, self.max_display))
+        self.height_buf.fill(1.5)
+        self.last_amp = np.zeros(n, dtype=float)
+        self.cursor_colors = ["#ffffff"] * n
+        self.ptr = 0
+        self.is_buf_full = False
+        self.sample_count = 0
+
+        # RAW 플롯: 기존 아이템 제거 후 n개 재생성
+        for r in self.cursor_rects:
+            self.raw_plot.removeItem(r)
+        self.cursor_rects.clear()
+        for i in range(n):
+            rect = pg.ScatterPlotItem(size=8, symbol="s", brush=self.cursor_colors[i])
+            self.raw_plot.addItem(rect)
+            self.cursor_rects.append(rect)
+
+        for i in range(len(self.past_lines)):
+            self.raw_plot.removeItem(self.past_lines[i])
+            self.raw_plot.removeItem(self.raw_lines[i])
+            self.raw_plot.removeItem(self.bar_items[i])
+        self.past_lines.clear()
+        self.raw_lines.clear()
+        self.bar_items.clear()
+        for i in range(n):
+            past_line = self.raw_plot.plot(
+                [], [], pen=pg.mkPen(color=get_ch_color(i), width=RAW_LINE_WIDTH, alpha=0.6)
+            )
+            self.past_lines.append(past_line)
+            line = self.raw_plot.plot([], [], pen=pg.mkPen(color=get_ch_color(i), width=RAW_LINE_WIDTH))
+            self.raw_lines.append(line)
+            bar = pg.BarGraphItem(
+                x=[], height=[], width=20.0,
+                brush=pg.mkBrush(get_ch_color(i)), pen=None,
+            )
+            self.raw_plot.addItem(bar)
+            self.bar_items.append(bar)
+            bar.setVisible(False)
+
+        y_max = n * CH_OFFSET
+        self.raw_plot.setYRange(0, y_max)
+        vb = self.raw_plot.getViewBox()
+        vb.setLimits(yMin=0, yMax=y_max, minYRange=50, maxYRange=y_max)
+
+        # Diagonal: 기존 라인 제거 후 n개 재생성
+        for line in self.diag_lines:
+            self.diag_plot.removeItem(line)
+        self.diag_lines.clear()
+        for i in range(n):
+            line = pg.PlotCurveItem()
+            self.diag_lines.append(line)
+            self.diag_plot.addItem(line)
+
+        # PWR: bar_item 제거 후 n+1개로 재생성
+        self.pwr_plot.removeItem(self.bar_item)
+        x_axis = self.pwr_plot.getAxis("bottom")
+        ticks = [(i, f"CH{i}") for i in range(n)] + [(n, "AVG")]
+        x_axis.setTicks([ticks])
+        self.bar_item = pg.BarGraphItem(
+            x=np.arange(n + 1),
+            height=[0] * (n + 1),
+            width=0.6,
+            brushes=[pg.mkBrush(get_ch_color(i)) for i in range(n)] + [pg.mkBrush(SUM_BAR_COLOR)],
+        )
+        self.pwr_plot.addItem(self.bar_item)
+
+        # SerialWorker 재생성 (last_amp 길이 등 N_CH 반영)
+        if self.worker.isRunning():
+            self.worker.stop()
+            self.worker.wait(500)
+        self.worker = SerialWorker()
+        self.worker.sig_sample.connect(self.on_sample)
+        self.worker.sig_status.connect(self.set_status)
+        self.worker.sig_error.connect(self.on_error)
 
     def card(self, title: str):
         frame = QFrame()
@@ -147,14 +243,30 @@ class EMGDashboard(QMainWindow):
         row_btn.addWidget(self.btn_start)
         row_btn.addWidget(self.btn_stop)
         lay.addLayout(row_btn)
-        form_widget = QWidget()
-        form_lay = QFormLayout(form_widget)
-
+        row_form = QHBoxLayout()
+        # 왼쪽 절반: Window Size
+        left_form = QWidget()
+        left_form_lay = QHBoxLayout(left_form)
+        left_form_lay.setContentsMargins(0, 0, 0, 0)
+        left_form_lay.addWidget(QLabel("Window Size:"))
         self.sp_nmult = QSpinBox()
         self.sp_nmult.setRange(1, 100)
         self.sp_nmult.setValue(self.n_mult)
-        form_lay.addRow("Window Size:", self.sp_nmult)
-        lay.addWidget(form_widget)
+        left_form_lay.addWidget(self.sp_nmult)
+        row_form.addWidget(left_form, 1)
+        # 오른쪽 절반: Channels
+        right_form = QWidget()
+        right_form_lay = QHBoxLayout(right_form)
+        right_form_lay.setContentsMargins(0, 0, 0, 0)
+        right_form_lay.addWidget(QLabel("Channels:"))
+        self.cb_channels = QComboBox()
+        self.cb_channels.addItems(["4ch", "6ch"])
+        self.cb_channels.setCurrentIndex(0 if config.N_CH == 4 else 1)
+        self.cb_channels.setMinimumWidth(80)
+        self.cb_channels.currentIndexChanged.connect(self.on_channels_changed)
+        right_form_lay.addWidget(self.cb_channels)
+        row_form.addWidget(right_form, 1)
+        lay.addLayout(row_form)
 
         self.lbl_status = QLabel("● DISCONNECTED")
         self.lbl_status.setStyleSheet(f"color:{COLOR_STATUS_DISCONNECTED}; font-weight:800;")
@@ -187,7 +299,7 @@ class EMGDashboard(QMainWindow):
         self.raw_plot.getAxis("left").setStyle(showValues=False)
         self.raw_plot.getAxis("bottom").enableAutoSIPrefix(False)
         x_max_ms = PLOT_SEC * 1000
-        y_max = N_CH * CH_OFFSET
+        y_max = config.N_CH * CH_OFFSET
         self.raw_plot.setXRange(0, x_max_ms, padding=0)
         self.raw_plot.setLabel("bottom", "Time", units="ms")
         self.raw_plot.setYRange(0, y_max)
@@ -201,17 +313,17 @@ class EMGDashboard(QMainWindow):
         self.raw_plot.setMouseEnabled(x=True, y=True)
 
         self.past_lines = []
-        for i in range(N_CH):
+        for i in range(config.N_CH):
             past_line = self.raw_plot.plot(
-                [], [], pen=pg.mkPen(color=CH_COLORS[i], width=RAW_LINE_WIDTH, alpha=0.6)
+                [], [], pen=pg.mkPen(color=get_ch_color(i), width=RAW_LINE_WIDTH, alpha=0.6)
             )
             self.past_lines.append(past_line)
-            line = self.raw_plot.plot([], [], pen=pg.mkPen(color=CH_COLORS[i], width=RAW_LINE_WIDTH))
+            line = self.raw_plot.plot([], [], pen=pg.mkPen(color=get_ch_color(i), width=RAW_LINE_WIDTH))
             self.raw_lines.append(line)
             bar = pg.BarGraphItem(
                 x=[], height=[],
                 width=20.0,
-                brush=pg.mkBrush(CH_COLORS[i]),
+                brush=pg.mkBrush(get_ch_color(i)),
                 pen=None,
             )
             self.raw_plot.addItem(bar)
@@ -236,7 +348,7 @@ class EMGDashboard(QMainWindow):
         self.diag_plot.addLine(x=0, pen=pen_guide)
         self.diag_plot.addLine(y=0, pen=pen_guide)
         self.diag_lines = []
-        for i in range(4):
+        for i in range(config.N_CH):
             line = pg.PlotCurveItem()
             self.diag_lines.append(line)
             self.diag_plot.addItem(line)
@@ -250,13 +362,13 @@ class EMGDashboard(QMainWindow):
         self.pwr_plot.setYRange(0, 110, padding=0)
         self.pwr_plot.enableAutoRange(axis="y", enable=False)
         x_axis = self.pwr_plot.getAxis("bottom")
-        ticks = [(0, "CH0"), (1, "CH1"), (2, "CH2"), (3, "CH3"), (4, "AVG")]
+        ticks = [(i, f"CH{i}") for i in range(config.N_CH)] + [(config.N_CH, "AVG")]
         x_axis.setTicks([ticks])
         self.bar_item = pg.BarGraphItem(
-            x=np.arange(5),
-            height=[0] * 5,
+            x=np.arange(config.N_CH + 1),
+            height=[0] * (config.N_CH + 1),
             width=0.6,
-            brushes=[pg.mkBrush(c) for c in CH_COLORS] + [pg.mkBrush(SUM_BAR_COLOR)],
+            brushes=[pg.mkBrush(get_ch_color(i)) for i in range(config.N_CH)] + [pg.mkBrush(SUM_BAR_COLOR)],
         )
         self.pwr_plot.addItem(self.bar_item)
         lay.addWidget(self.pwr_plot, 1)
@@ -268,12 +380,12 @@ class EMGDashboard(QMainWindow):
     def on_sample(self, raw_vals, amp_vals):
         if not self.is_running:
             return
-        self.last_raw = raw_vals
+            
         self.last_amp = amp_vals
         self.sample_count += 1
         curr_ts_ms = (time.time() - self.start_time_ref) * 1000
         self.raw_np_buf[:, self.ptr] = raw_vals
-        for i in range(N_CH):
+        for i in range(config.N_CH):
             self.scale_manager.scalers[i].update(raw_vals[i])
         self.ptr += 1
         if self.ptr >= self.max_display:
@@ -296,6 +408,9 @@ class EMGDashboard(QMainWindow):
         self.is_buf_full = False
         self.sample_count = 0
         self.start_time_ref = time.time()
+        
+        # 스케일 정보 초기화
+        self.scale_manager.reset()
 
         self.csv_logger = None
         if ENABLE_CSV_LOGGING:

@@ -1,6 +1,6 @@
-# EMG Dashboard (4채널) — 프로젝트 상세 문서
+# EMG Dashboard — 프로젝트 상세 문서
 
-이 문서는 4채널 근전도(EMG) 실시간 시각화 대시보드의 개발 환경, 아키텍처, 핵심 로직, UI, 알고리즘, 그리고 개발 과정에서의 문제·해결을 정리한 것이다. 기존 README·MODULES와 중복되는 부분은 요약하고, 상세 설명·설정·역할 분리는 이 문서를 기준으로 한다.
+이 문서는 근전도(EMG) 실시간 시각화 대시보드의 개발 환경, 아키텍처, 핵심 로직, UI, 알고리즘을 정리한 것이다. **4채널/6채널** 모드를 지원한다. 기존 README·MODULES와 중복되는 부분은 요약하고, 상세 설명·설정·역할 분리는 이 문서를 기준으로 한다.
 
 ---
 
@@ -97,7 +97,7 @@ python main.py
 |-------------|------|------|
 | `EMGDashboard` | dashboard_ui | QMainWindow 서브클래스; 전체 UI, 버퍼, 타이머, 시리얼 워커·시그널 연결 |
 | `SerialWorker` | serial_worker | QThread; 시리얼 루프, 파싱, 진폭 계산, `sig_sample`/`sig_status`/`sig_error` |
-| `EMGScaleManager` | emg_scale | 채널별 `ChannelScaler` 리스트, `get_scaled_array`, `get_vector_intensity`, `_data_range_and_half_height` |
+| `EMGScaleManager` | emg_scale | 채널별 `ChannelScaler` 리스트, `get_scaled_array`, `get_vector_intensity`, `_data_range_and_half_height()` |
 | `ChannelScaler` | emg_scale | 채널당 min/max/baseline 유지, `update(raw_value)` |
 | `CSVLogger` | logger | 세션당 CSV 파일, 버퍼·flush·close |
 
@@ -123,17 +123,17 @@ python main.py
 | **main.py** | `main` | `QApplication`, `EMGDashboard()`, `show()`, `exec()` |
 | **dashboard_ui.py** | `__init__` | 버퍼·스케일러·UI 초기화, 워커·타이머·시그널 연결 |
 | | `init_ui` | 좌/우 레이아웃, 설정·RAW·Diagonal·PWR 패널 배치 |
-| | `build_settings_panel` | 포트, Refresh, START/STOP, Window Size, 상태 라벨 |
+| | `build_settings_panel` | 포트, Refresh, START/STOP, Window Size, Channels(4ch/6ch), 상태 라벨 |
 | | `build_raw_plot_panel` | RAW 플롯, Line/Fill 라디오, 채널별 라인·막대·커서 생성 |
 | | `build_diag_panel` | Diagonal Vector 플롯, 가이드 라인, diag_lines 4개 |
-| | `build_pwr_panel` | PWR PlotWidget, BarGraphItem(5), CH0~CH3·AVG 틱 |
+| | `build_pwr_panel` | PWR PlotWidget, BarGraphItem(N_CH+1), CH0~CH(N-1)·AVG 틱 |
 | | `render` | `graph_render.render(win)` 호출 |
 | | `on_sample` | raw/amp 수신 시 버퍼·ptr·스케일러 갱신, CSV write_row |
-| | `start_serial` | 버퍼 초기화, CSVLogger 생성(옵션), worker.configure·start, set_running_ui(True) |
+| | `start_serial` | 버퍼 초기화, scale_manager.reset(), CSVLogger 생성(옵션), worker.configure·start, set_running_ui(True) |
 | | `stop_serial` | worker.stop·wait, csv_logger.close, set_running_ui(False) |
-| | `set_running_ui` | START/STOP/포트/Refresh/Window Size 활성·비활성 |
-| **serial_worker.py** | `parse_line_4ch(line)` | 한 줄에서 숫자 추출, 마지막 4개 float 반환 |
-| | `compute_amp_from_samples(sample_buf)` | deque → (max−min) per channel, 4채널 amp 배열 반환 |
+| | `set_running_ui` | START/STOP/포트/Refresh/Window Size/Channels 활성·비활성 |
+| **serial_worker.py** | `parse_line_4ch(line)` | 한 줄에서 숫자 추출, 마지막 N_CH개 float 반환 |
+| | `compute_amp_from_samples(sample_buf)` | deque → 채널별 (max−min) amp 배열 반환 |
 | | `run` | 시리얼 열기, `in_waiting` 읽기, 줄 단위 split, 파싱·AMP 계산·sig_sample |
 | | `update_params(n_mult)` | n_samples = BASE_SAMPLES * n_mult, sample_buf 재생성 |
 | **graph_render.py** | `render(win)` | is_running·sample_count 검사 후 update_raw_graph, update_diag_vector, update_power_info |
@@ -224,7 +224,7 @@ python main.py
 ### 5.3 주요 기능 요약
 
 - **RAW Line**: 링 버퍼 past/current 구간 분리, get_scaled_array로 Y 계산, 0 근처는 RAW_ZERO_REF(100) 위치에 표시.
-- **RAW Bar**: step=30 구간별 max−min → BAR_HEIGHT_REF_RAW(100) 대비 비율 → height_buf, BarGraphItem setOpts.
+- **RAW Bar**: step=30 구간별 max−min → data_range/2 기준 비율(Line과 동일) → height_buf, BarGraphItem setOpts.
 - **Diagonal Vector**: 4방향 (-0.707,-0.707), (-0.707,0.707), (0.707,0.707), (0.707,-0.707). 최근 100샘플, get_vector_intensity로 길이·펜 두께·알파.
 - **PWR**: get_vector_intensity → 0~100% 높이, AVG는 4채널 비율 평균.
 
@@ -248,7 +248,7 @@ python main.py
   - dynamic_half_range = current_max − baseline (최소 20).  
   - intensity = (amp_value / dynamic_half_range) * gains[ch_idx] * 1.3, clip 0~1.  
   - 채널별 “자기 관측 범위 대비” 비율.
-- **RAW Bar**: 구간별 (ch_max−ch_min) / BAR_HEIGHT_REF_RAW(100) 비율로 막대 높이. 채널 밴드 반높이(max_bar_pixels)에 비례.
+- **RAW Bar**: 구간별 (ch_max−ch_min) / (data_range/2) 비율로 막대 높이. Line과 동일한 공통 data_range 사용 → 채널 간 비교 일치.
 
 ---
 
@@ -309,12 +309,13 @@ python main.py
 
 - **README.md**: 프로젝트 소개, 요구사항, 설치·실행, 시리얼 프로토콜 요약, MODULES 링크.
 - **MODULES.md**: 구조·흐름·동적 스케일링·모듈 역할·코드 흐름 상세. 실행 방법은 README 참고.
-- **본 문서(PROJECT_DOCUMENTATION_4CH.md)**: 개발 환경, 아키텍처, 핵심 로직, UI, 알고리즘, 문제·해결까지 4채널 버전을 한곳에 정리.
+- **본 문서(PROJECT_DOCUMENTATION_4CH.md)**: 개발 환경, 아키텍처, 핵심 로직, UI, 알고리즘을 한곳에 정리. 4ch/6ch 모드 지원.
 
-### 7.2 확장 시 참고 (6ch 등)
+### 7.2 채널 모드 (4ch/6ch)
 
-- 채널 수 N을 런타임 변수로 두고, 헤더에서 4/6 수신 시 N 갱신.
-- RAW: N개 라인·막대·커서 생성(또는 최대 6개 생성 후 N개만 사용). Y 범위 N*CH_OFFSET.
+- SETTINGS 패널의 **Channels** 콤보박스로 4ch/6ch 선택. 연결 해제 후에만 변경 가능.
+- 변경 시 `reinit_channel_mode()`로 버퍼·플롯·스케일러·SerialWorker를 N_CH 기준으로 재생성.
+- RAW: N개 라인·막대·커서 생성. Y 범위 N*CH_OFFSET. (이미 구현됨)
 - Diagonal Vector: 방향을 360°/N 간격으로 계산(4→90°, 6→60°). diag_lines N개.
 - PWR: BarGraphItem N+1개, ticks CH0~CH(N-1), AVG. CH_COLORS 6개 확장.
 - serial_worker: N에 따라 파싱 개수·프레임 길이 분기.
@@ -332,14 +333,15 @@ python main.py
 
 | 구분 | 이름 | 값 | 위치 | 설명 |
 |------|------|-----|------|------|
-| **공통** | N_CH | 4 | config | 채널 수 |
+| **공통** | N_CH, CH_MODE | 4 | config | 채널 수 (4ch/6ch 전환 가능) |
 | | FPS | 30 | config | 렌더 주기(Hz), 타이머 간격 = 1000/FPS ms |
 | | PLOT_SEC | 5.0 | config | RAW X축 표시 구간(초) |
 | | max_display | 5000 | dashboard_ui | RAW 링 버퍼·x_axis 샘플 수 |
 | **시리얼/신호** | BASE_SAMPLES | 5 | config | 진폭 윈도우 기본 샘플 수 |
 | | N_MULT_DEFAULT | 10 | config | n_samples = BASE_SAMPLES * n_mult |
 | | calc_interval | 5 | serial_worker | 몇 샘플마다 진폭 재계산 |
-| **RAW 스케일** | CH_OFFSET | 100 | config | 채널 밴드 세로 간격(px) |
+| **RAW 스케일** | RAW_Y_MIN_INIT, RAW_Y_MAX_INIT | 55, 100 | config | ChannelScaler 초기 min/max |
+| | CH_OFFSET | 100 | config | 채널 밴드 세로 간격(px) |
 | | RAW_ZERO_REF | 100 | config | 신호 없음일 때 표시할 raw 기준값 |
 | | RAW_ZERO_THRESHOLD | 1.0 | config | 이 값 이하면 "신호 없음"으로 치환 |
 | | safe_margin_factor | 0.85 | emg_scale | allowed_half_height 계산 |
@@ -347,7 +349,6 @@ python main.py
 | | decay_alpha | 0.00001 | emg_scale | min/max 감쇠 계수 |
 | **RAW Bar** | step | 30 | graph_render | 구간 크기, Bar 샘플 간격 |
 | | gap_range | 5 | graph_render | Bar 갭 구간 수 |
-| | BAR_HEIGHT_REF_RAW | 100.0 | graph_render | 변동폭 100 → 막대 최대 높이 |
 | | NO_SIGNAL_VARIATION_RAW | 1.0 | graph_render | 구간 변동폭 < 이 값이면 최소 높이 |
 | | LINE_HEIGHT_PX | 1.5 | graph_render | 신호 없음 구간 막대 최소 높이 |
 | **Diagonal** | DATA_LEN | 100 | graph_render | 채널당 최근 100샘플 |
@@ -402,9 +403,9 @@ python main.py
 
 ## 12. ChannelScaler·baseline 로직 상세
 
-- **초기값**: current_min = 10, current_max = 100, baseline = 55.
-- **update(raw_value)**: raw_value > current_max → current_max = raw_value + 5. raw_value < current_min → current_min = raw_value − 5. 그 외 → current_max -= (current_max − raw_value)*decay_alpha, current_min += (raw_value − current_min)*decay_alpha. target_baseline = (current_max + current_min)/2, baseline += (target_baseline − baseline)*baseline_alpha.
-- **의미**: 신호가 벗어나면 범위 확장, 안에 있으면 감쇠. baseline은 (min+max)/2 쪽으로 스무딩.
+- **초기값**: current_min = RAW_Y_MIN_INIT(55), current_max = RAW_Y_MAX_INIT(100), baseline = (min+max)/2. has_data = False.
+- **update(raw_value)**: raw_value ≤ RAW_ZERO_THRESHOLD(1.0)이면 return(0은 min/max 갱신에서 제외). has_data = True. raw_value > current_max → current_max 갱신. raw_value < current_min → current_min 갱신. 그 외 → decay로 current_max/current_min 수축. target_baseline = (current_max + current_min)/2, baseline 스무딩(baseline_alpha).
+- **의미**: 신호가 벗어나면 범위 확장, 안에 있으면 감쇠. baseline은 (min+max)/2 쪽으로 스무딩. 0은 센서 미인식 등으로 간주하고 min/max에 반영하지 않음.
 
 ---
 
@@ -423,7 +424,7 @@ python main.py
 
 - **생성**: START 시 ENABLE_CSV_LOGGING이 True면 CSVLogger(buffer_size=500). directory 기본 "data".
 - **파일명**: data/YYYYMMDD_HHMMSS_emg.csv.
-- **헤더**: Time(ms), Raw_CH0~Raw_CH3, Amp_CH0~Amp_CH3. 한 번만 기록.
+- **헤더**: Time(ms), Raw_CH0~Raw_CH(N-1), Amp_CH0~Amp_CH(N-1). config.N_CH 기준. 한 번만 기록.
 - **write_row**: timestamp는 start_serial에서 설정한 start_time_ref 기준 (time.time() - start_time_ref)*1000. 전달받은 timestamp가 있으면 그대로 사용. processed_raw = [int(float(v)) for v in raw_vals], processed_amp = [int(round(float(v))) for v in amp_vals]. 버퍼에 [relative_time_ms, raw0~3, amp0~3] 추가. len(buffer) >= buffer_size면 flush. ValueError/TypeError 발생 시 print만 하고 해당 행은 버퍼에 넣지 않음.
 - **종료**: STOP 시 close() → flush 후 파일 닫기. flush 시 writerows + file.flush + buffer.clear. close 시 file.closed 확인 후 닫고 "Saved: ..." 출력.
 
@@ -442,18 +443,18 @@ python main.py
 ## 16. 데이터 범위가 다른 센서(동적 스케일 요약)
 
 - **RAW Line**: 전 채널 공통 data_range. 같은 raw 변동폭이면 같은 세로 폭. baseline만 채널별.
-- **RAW Bar**: 구간별 변동폭을 BAR_HEIGHT_REF_RAW(100)에 대한 비율로 막대 높이.
+- **RAW Bar**: 구간별 변동폭을 Line과 동일한 data_range/2 기준 비율로 막대 높이. 채널 간 비교 일치.
 - **Diagonal Vector·PWR**: 채널별 dynamic_half_range. 각 채널이 자기 관측 범위 대비 비율. 공통 data_range 미사용.
 
 ---
 
 ## 17. 제한 사항·알려진 이슈
 
-- **채널 수**: N_CH=4 기준. 6ch 전환 시 확장 작업 필요.
+- **채널 수**: 4ch/6ch 모드 지원. Channels 콤보로 전환 가능(연결 해제 후).
 - **파싱**: 텍스트(한 줄 4실수 + \n)만 지원. 23바이트 이진은 미구현.
 - **diag_lines**: build_diag_panel에서 for i in range(4) 하드코딩.
 - **진폭 초기**: sample_buf가 n_samples 미만일 때 last_amp는 이전 값 유지.
-- **CSV**: 헤더·컬럼이 4ch 고정.
+- **CSV**: 헤더·컬럼이 config.N_CH 기준(동적).
 
 ---
 
@@ -476,7 +477,7 @@ python main.py
 
 ## 20. RAW Bar 모드 갭·표시 로직 상세
 
-- **unified_x_ms**: render()에서 **safe_ptr = win.ptr % win.max_display**, **unified_x_ms = win.x_axis[safe_ptr]** 로 "현재 시간축 위치"를 구함. Bar 모드에서 **last_x** 계산 시, win.sample_count > 0이 아니면 **unified_x_ms**를 사용해 막대 X 위치를 맞춤.
+- **unified_x_ms**: render()에서 **unified_x_ms = win.x_axis[win.ptr % win.max_display]** 로 "현재 시간축 위치"를 구함. Bar 모드에서 last_x 계산 시, win.sample_count > 0이 아니면 unified_x_ms를 사용해 막대 X 위치를 맞춤.
 - **gap_start**: **gap_start = win.ptr // step** (step은 Bar 구간 크기, 예: 30). "현재 ptr이 속한 구간"의 인덱스.
 - **갭 목적**: "지금 기록 중인 구간"을 막대 높이 0으로 비워서 커서처럼 보이게 함.
 - **is_buf_full == False**: **display_heights[gap_start:] = 0**. 아직 한 바퀴 안 채웠으므로 gap_start 이후 구간은 비움.
@@ -487,10 +488,10 @@ python main.py
 ## 21. 기타 로직·동작 상세
 
 - **RAW 패널 헤더 레이아웃**: build_raw_plot_panel에서 카드의 첫 번째 위젯(제목 라벨)을 **lay.itemAt(0).widget()**으로 꺼내 **header_layout**에 넣고, Line/Fill 라디오 버튼을 같은 header_layout에 추가. 제목과 모드 선택이 **한 줄**에 오도록 함.
-- **compute_amp_from_samples 반환값**: **(amp, pkt)** 두 개. amp는 4채널 진폭 배열. 샘플 버퍼가 비어 있으면 **np.zeros(4)**, **np.array([])** (pkt) 반환. 현재 pkt는 호출부에서 미사용.
-- **PWR bar_item**: 생성 시 **x = np.arange(5)** 고정. update_power_info에서는 **setOpts(height=...)** 만 갱신하고 **x는 변경하지 않음**. 5개 막대의 X 위치는 고정, 높이만 갱신.
+- **compute_amp_from_samples 반환값**: 채널별 진폭 배열 **amp** (np.ndarray). 샘플 버퍼가 비어 있으면 np.zeros(config.N_CH) 반환.
+- **PWR bar_item**: x = np.arange(N_CH+1). update_power_info에서는 setOpts(height=...)만 갱신. N_CH+1개 막대(CH0~CH(N-1), AVG)의 X 위치는 고정, 높이만 갱신.
 - **start_time_ref**: **start_serial()**에서 **start_time_ref = time.time()** 설정. on_sample()에서 CSV용 상대 시간(ms)은 **(time.time() - start_time_ref) * 1000** 으로 계산해 write_row에 전달.
 
 ---
 
-*이 문서는 4채널 EMG Dashboard 기준으로 작성되었으며, 6채널 또는 프로토콜 변경 시 위 “확장 시 참고”와 MODULES.md를 함께 참고하면 된다.*
+*이 문서는 EMG Dashboard 기준으로 작성되었으며, 4ch/6ch 모드는 SETTINGS 패널 Channels 콤보로 전환 가능하다. 프로토콜 변경 시  “확장 시 참고”와 MODULES.md를 참고하면 된다.*

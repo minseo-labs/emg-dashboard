@@ -5,29 +5,29 @@ import numpy as np
 from collections import deque
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from config import N_CH, BASE_SAMPLES, N_MULT_DEFAULT
+import config
+from config import BASE_SAMPLES, N_MULT_DEFAULT
 
 
-# 데이터 파싱 함수
+# 데이터 파싱 함수 (config.N_CH개 값 반환)
 def parse_line_4ch(line: str):
     if not line: return None
     nums = re.findall(r'[-+]?\d*\.\d+|\d+', line)
-    if len(nums) < 4: return None
-    return [float(v) for v in nums[-4:]]
+    if len(nums) < config.N_CH: return None
+    return [float(v) for v in nums[-config.N_CH:]]
 
 
 # 진폭 계산 함수
 def compute_amp_from_samples(sample_buf: deque):
     if not sample_buf or len(sample_buf) == 0:
-        return np.zeros(4), np.array([])
+        return np.zeros(config.N_CH)
     pkt = np.array(sample_buf, dtype=float)
-    amp = np.max(pkt, axis=0) - np.min(pkt, axis=0)
-    return amp, pkt
+    return np.max(pkt, axis=0) - np.min(pkt, axis=0)
 
 
 # 시리얼 통신 전용 스레드 클래스
 class SerialWorker(QThread):
-    # (원본데이터, 보정데이터, 진폭데이터)
+    # (원본 raw, 진폭 amp)
     sig_sample = pyqtSignal(list, object) 
     sig_status = pyqtSignal(str)
     sig_error = pyqtSignal(str)
@@ -41,13 +41,13 @@ class SerialWorker(QThread):
         self._buf = bytearray()
 
         # 내부 계산용 버퍼 및 파라미터
-        self.n_samples = int(BASE_SAMPLES * N_MULT_DEFAULT)
+        self.n_samples = int(BASE_SAMPLES * config.N_MULT_DEFAULT)
         self.sample_buf = deque(maxlen=self.n_samples)
         
         # 최적화: 진폭 계산 주기 관리
         self.calc_counter = 0
         self.calc_interval = 5          # 5개 샘플마다 한 번씩 Amplitude 계산 (CPU 부하 감소)
-        self.last_amp = np.zeros(N_CH)
+        self.last_amp = np.zeros(config.N_CH)
 
     # 포트 설정 정보를 주입
     def configure(self, port: str, baud: int, n_mult: int):
@@ -98,10 +98,8 @@ class SerialWorker(QThread):
                             s = line.decode(errors="ignore").strip()
                             if not s: continue
 
-                            vals4 = parse_line_4ch(s)
-                            if vals4 is not None:
-                                # 2-1. 원본 데이터 저장
-                                raw_vals = vals4
+                            raw_vals = parse_line_4ch(s)
+                            if raw_vals is not None:
                                 
                                 # 2-3. Amplitude 계산 (주기적 최적화)
                                 self.sample_buf.append(raw_vals)
@@ -109,7 +107,7 @@ class SerialWorker(QThread):
                                 
                                 if self.calc_counter >= self.calc_interval:
                                     if len(self.sample_buf) >= self.n_samples:
-                                        self.last_amp, _ = compute_amp_from_samples(self.sample_buf)
+                                        self.last_amp = compute_amp_from_samples(self.sample_buf)
                                     self.calc_counter = 0
 
                                 # 2-4. UI로 데이터 전송
