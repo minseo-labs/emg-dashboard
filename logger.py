@@ -1,10 +1,3 @@
-"""
-CSV 데이터 로깅 모듈.
-
-- 연결 시작 시 data/ 폴더에 YYYYMMDD_HHMMSS_emg.csv 생성
-- write_row: raw·amp 행 버퍼에 추가. buffer_size 도달 시 writerows 일괄 기록
-- flush: 버퍼 내용 디스크 기록, I/O 횟수 감소
-"""
 import csv
 import os
 import time
@@ -14,14 +7,9 @@ import config
 
 
 class CSVLogger:
-    """시리얼 raw·amp 데이터를 CSV로 저장. 버퍼링으로 I/O 횟수 감소."""
 
     def __init__(self, directory="data", buffer_size=600):
-        """
-        데이터 저장 시스템 초기화
-        :param directory: CSV 파일이 저장될 폴더명
-        :param buffer_size: 메모리에 유지할 데이터 행 수 (I/O 오버헤드 방지용)
-        """
+
         # 저장 폴더 생성
         if not os.path.exists(directory):
             os.makedirs(directory)
@@ -49,14 +37,12 @@ class CSVLogger:
         self._header_written = True
 
     def write_row(self, raw_vals, amp_vals, timestamp=None):
-        """
-        [수정] window.py에서 보낸 timestamp 키워드 인자를 받을 수 있도록 매개변수 추가
-        """
+
         # 헤더가 아직 안 써졌다면 기록
         if not self._header_written:
             self._write_header()
 
-        # [로직 개선] 밖에서 timestamp를 주면 그것을 쓰고, 없으면 여기서 직접 계산
+        # 밖에서 timestamp를 주면 그것을 쓰고, 없으면 여기서 직접 계산
         if timestamp is not None:
             relative_time_ms = int(round(timestamp))
         else:
@@ -77,7 +63,7 @@ class CSVLogger:
             print(f"Logger Error: {e}")
 
     def flush(self):
-        """메모리 버퍼의 데이터를 실제 디스크 파일로 출력"""
+
         if self.buffer:
             try:
                 # 여러 줄을 한 번에 쓰기 (Disk I/O 횟수 감소)
@@ -88,7 +74,7 @@ class CSVLogger:
                 print(f"Flush Error: {e}")
 
     def close(self):
-        """종료 시 남은 데이터를 모두 저장하고 리소스 해제"""
+
         self.flush()
         if not self.file.closed:
             self.file.close()

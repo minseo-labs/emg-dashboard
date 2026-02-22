@@ -8,23 +8,22 @@ from PyQt6.QtCore import QThread, pyqtSignal
 import config
 from config import BASE_SAMPLES, N_MULT_DEFAULT
 
-# 한 줄 문자열에서 채널 값 파싱
+# 한 줄 문자열에서 숫자 추출. 줄당 4개면 4ch, 6개면 6ch로 자동 감지
 def parse_line(line: str):
-    if not line: return None
+    if not line:
+        return None
     nums = re.findall(r'[-+]?\d*\.\d+|\d+', line)
-    if len(nums) < config.N_CH: return None
-    return [float(v) for v in nums[-config.N_CH:]]
+    if len(nums) not in (4, 6):
+        return None
+    n = len(nums)
+    return ([float(v) for v in nums], n)
 
 
-# 진폭 계산 
+# 진폭 계산 (채널 수는 sample_buf 행 길이에서 유추)
 def compute_amp_from_samples(sample_buf: deque):
     if not sample_buf or len(sample_buf) == 0:
-        return np.zeros(config.N_CH)
-
-    # (샘플개수, 채널개수) 형태의 numpy 배열로 변환
+        return None  # 호출측에서 n_ch 알 때 np.zeros(n_ch) 사용
     pkt = np.array(sample_buf, dtype=float)
-
-    # 열방향(채널) 기준
     return np.max(pkt, axis=0) - np.min(pkt, axis=0)
 
 
@@ -33,21 +32,21 @@ class SerialWorker(QThread):
     sig_sample = pyqtSignal(list, object)  # (raw_vals, amp_vals)
     sig_status = pyqtSignal(str)
     sig_error = pyqtSignal(str)
+    sig_channel_detected = pyqtSignal(int)  # 줄 단위로 감지한 채널 수 (4 또는 6)
 
     def __init__(self):
         super().__init__()
         self._running = False
+        self._session_n_ch = None  # START 시점에 None, 첫 유효 줄에서 4 또는 6으로 설정
 
-        # 시리얼 설정 값 
         self._port = None
         self._baud = 115200
         self._ser = None
+        self._buf = bytearray()
 
-        self._buf = bytearray()  # 수신 바이트 저장
-
-        self.n_samples = int(BASE_SAMPLES * config.N_MULT_DEFAULT)  # 윈도우 크기(진폭 계산용)
+        self.n_samples = int(BASE_SAMPLES * config.N_MULT_DEFAULT)
         self.sample_buf = deque(maxlen=self.n_samples)
-        self.calc_counter = 0  # n_samples개 들어올 때마다 진폭 계산
+        self.calc_counter = 0
         self.last_amp = np.zeros(config.N_CH)
 
     # 설정 
@@ -81,44 +80,54 @@ class SerialWorker(QThread):
             return
 
         self._running = True
+        self._session_n_ch = None  # START 시점 리셋 → 첫 줄에서 4/6 자동 감지
         self.sig_status.emit(f"CONNECTED: {self._ser.name}")
 
         try:
             while self._running:
                 if self._ser is None or not self._ser.is_open: break
 
-                # 읽을 원천 바이트 데이터 있는 경우 
                 if self._ser.in_waiting > 0:
                     data = self._ser.read(self._ser.in_waiting)
                     self._buf.extend(data)
 
-                    # 줄단위 처리 
                     while b"\n" in self._buf:
                         line, rest = self._buf.split(b"\n", 1)
                         self._buf = bytearray(rest)
-                        
+
                         try:
-                            # 바이트 -> 문자열 
                             s = line.decode(errors="ignore").strip()
                             if not s: continue
-                            
-                            # 문자열 -> 채널 값 파싱 
-                            raw_vals = parse_line(s)
 
-                            if raw_vals is not None:
-                                
-                                self.sample_buf.append(raw_vals)
-                                self.calc_counter += 1
-                                if self.calc_counter >= self.n_samples:
-                                    if len(self.sample_buf) >= self.n_samples:
-                                        self.last_amp = compute_amp_from_samples(self.sample_buf)
-                                    self.calc_counter = 0
+                            parsed = parse_line(s)
+                            if parsed is None: continue
 
-                                # UI로 raw + amp 전달 
-                                self.sig_sample.emit(raw_vals, self.last_amp)
+                            raw_vals, n = parsed
+
+                            if self._session_n_ch is None:
+                                # 첫 유효 줄: 채널 수 감지 후 시그널만 보내고 이 줄은 버림
+                                self._session_n_ch = n
+                                self.sample_buf = deque(maxlen=self.n_samples)
+                                self.last_amp = np.zeros(n)
+                                self.calc_counter = 0
+                                self.sig_channel_detected.emit(n)
+                                continue
+
+                            if n != self._session_n_ch:
+                                continue
+
+                            self.sample_buf.append(raw_vals)
+                            self.calc_counter += 1
+                            if self.calc_counter >= self.n_samples:
+                                if len(self.sample_buf) >= self.n_samples:
+                                    amp = compute_amp_from_samples(self.sample_buf)
+                                    if amp is not None:
+                                        self.last_amp = amp
+                                self.calc_counter = 0
+
+                            self.sig_sample.emit(raw_vals, self.last_amp)
 
                         except Exception:
-                            # 개별 라인 파싱 오류 무시 
                             continue
 
                 time.sleep(0.001) 

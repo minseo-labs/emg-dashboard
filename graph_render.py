@@ -171,7 +171,6 @@ def update_diag_vector(win):
         if diag_raw.size < 2:
             continue
 
-
         # ratio(강도) 및 파형 정규화 
         scaler = win.scale_manager.scalers[i]
 

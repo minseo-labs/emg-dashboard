@@ -1,9 +1,14 @@
 import math
 
-CH_MODE = 4
-N_CH = CH_MODE
+N_CH = 4  # 초기값, START 시 첫 줄에서 4 또는 6으로 자동 감지
 FPS = 30
-PLOT_SEC = 5.0
+PLOT_SEC = 5.0  # RAW 그래프에 표시할 시간(초), 버퍼는 수신 속도에 따라 동적 조정
+
+# [RAW 버퍼 동적 크기] 수신 속도에 따라 "최근 PLOT_SEC초"만 유지
+MIN_BUF = 100
+MAX_BUF = 100000
+RATE_UPDATE_INTERVAL = 1.0  # 속도 재계산 주기(초)
+BUF_RESIZE_THRESHOLD = 0.15  # 이 비율만큼 차이 날 때만 리사이즈 
 
 # [시리얼/신호 처리]
 ENABLE_CSV_LOGGING = True
@@ -16,7 +21,7 @@ RAW_Y_MIN_INIT = 55
 RAW_Y_MAX_INIT = 100
 RAW_ZERO_REF = 100
 RAW_ZERO_THRESHOLD = 1.0
-NO_SIGNAL_VARIATION_RAW = 1.0  # Bar 모드: 구간 변동폭 이하면 신호 없음(최소 높이)
+NO_SIGNAL_VARIATION_RAW = 1.0
 
 # [디자인 설정]
 RAW_LINE_WIDTH = 1.6

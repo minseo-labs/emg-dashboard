@@ -1,32 +1,30 @@
 # EMG Dashboard — 프로젝트 상세 문서
 
-이 문서는 근전도(EMG) 실시간 시각화 대시보드의 개발 환경, 아키텍처, 핵심 로직, UI, 알고리즘을 정리한 것이다. **4채널/6채널** 모드를 지원한다. 기존 README·MODULES와 중복되는 부분은 요약하고, 상세 설명·설정·역할 분리는 이 문서를 기준으로 한다.
+> **대상: 개발자**  
+> 설정값·아키텍처·알고리즘·용어를 자세히 참조할 때 사용합니다.  
+> 사용 방법은 [README.md](README.md), 모듈 구조·데이터 흐름은 [MODULES.md](MODULES.md)를 먼저 보면 됩니다.
+
+이 문서는 개발 환경, 아키텍처, 핵심 로직, UI, **설정값·용어·수식** 등을 한곳에 모은 **참조용** 정리입니다.  
 
 ---
 
-## 목차
+## 목차 (찾기 쉽게)
 
-1. [개발 환경 요구사항](#1-개발-환경-요구사항)
-2. [아키텍처 개요](#2-아키텍처-개요)
-3. [핵심 로직 상세](#3-핵심-로직-상세)
-4. [UI 구성 요소](#4-ui-구성-요소)
-5. [주요 기능 및 알고리즘](#5-주요-기능-및-알고리즘)
-6. [개발 과정에서의 문제와 해결](#6-개발-과정에서의-문제와-해결)
-7. [기타 참고 사항](#7-기타-참고-사항)
-8. [설정값·상수 일람](#8-설정값상수-일람)
-9. [용어 정의](#9-용어-정의)
-10. [시그널·슬롯·이벤트](#10-시그널슬롯이벤트)
-11. [RAW 링 버퍼·구간 분리](#11-raw-링-버퍼구간-분리)
-12. [ChannelScaler·baseline 로직 상세](#12-channelscalerbaseline-로직-상세)
-13. [Diagonal Vector 수식](#13-diagonal-vector-수식)
-14. [CSV 로거 상세](#14-csv-로거-상세)
-15. [에러 처리·종료](#15-에러-처리종료)
-16. [데이터 범위가 다른 센서(동적 스케일 요약)](#16-데이터-범위가-다른-센서동적-스케일-요약)
-17. [제한 사항·알려진 이슈](#17-제한-사항알려진-이슈)
-18. [초기화·생성 순서 상세](#18-초기화생성-순서-상세)
-19. [시리얼 수신·파싱 로직 상세](#19-시리얼-수신파싱-로직-상세)
-20. [RAW Bar 모드 갭·표시 로직 상세](#20-raw-bar-모드-갭표시-로직-상세)
-21. [기타 로직·동작 상세](#21-기타-로직동작-상세)
+| 번호 | 섹션 | 내용 한 줄 |
+|------|------|------------|
+| 1 | 개발 환경 요구사항 | Python·라이브러리·실행 방법 |
+| 2 | 아키텍처 개요 | MVC 유사 구조, 클래스·위젯 역할 |
+| 3 | 핵심 로직 상세 | 파일별 메서드, 동작 순서, 스레드, 프로토콜 |
+| 4 | UI 구성 요소 | 디자인·레이아웃 |
+| 5 | 주요 기능 및 알고리즘 | 데이터 구조, 스케일링·동적 버퍼 요약 |
+| 6 | 설정값·상수 일람 | config·버퍼·스케일 상수 표 |
+| 7 | 용어 정의 | RAW, AMP, baseline, ptr 등 |
+| 8 | 시그널·슬롯·이벤트 | Qt 시그널·버튼·타이머 |
+| 9 | RAW 링 버퍼·구간 분리 | ptr, is_buf_full, 과거/현재 구간 |
+| 10 | ChannelScaler·baseline | min/max/baseline 갱신 로직 |
+| 11 | Diagonal Vector 수식 | 방향·파형·좌표 계산 |
+| 12 | CSV 로거 상세 | 파일명·헤더·write_row |
+| 13 | 에러 처리·종료 | 시리얼·CSV·closeEvent |
 
 ---
 
@@ -43,29 +41,15 @@
 | **시리얼** | pyserial | 포트 열기/읽기, 줄 단위 또는 바이트 단위 파싱 |
 | **표준 라이브러리** | `sys`, `re`, `time`, `csv`, `os`, `datetime`, `collections.deque` | 진입점, 정규식 파싱, 타이밍, 로깅, deque 버퍼 |
 
-- **실행**: 프로젝트 루트에서 `python main.py`. 시리얼 포트 선택 후 START로 수신 시작.
+- **실행**: [README.md](README.md) 참고. 시리얼 포트 선택 후 START로 수신 시작.
 
 ### 1.2 설치 및 실행 절차
 
-```text
-# 가상환경 생성 및 활성화 (Windows)
-python -m venv .venv
-.venv\Scripts\activate
-
-# 의존성 설치
-pip install PyQt6 pyqtgraph numpy pyserial
-
-# 실행
-python main.py
-```
-
-- macOS/Linux: `source .venv/bin/activate`. 프로젝트 루트에서 실행할 것.
+설치·실행 절차는 [README.md](README.md)를 참고하세요.
 
 ### 1.3 하드웨어
 
-- **시리얼 장치**: EMG 센서(또는 N_CH개 값을 한 줄로 전송하는 장치). 여러 센서·채널 수 대응.
-- **프로토콜 (구현)**: 텍스트 — 한 줄에 N_CH개 실수(공백 구분), 줄 끝 `\n`. 4ch면 4개, 6ch면 6개.
-- **프로토콜 (문서화만)**: 23바이트 이진 프레임 (헤더 2 + 데이터 20 + 체크섬 1 XOR). 별도 파서 미구현.
+- **시리얼 장치**: EMG 센서(또는 한 줄로 N_CH개 값을 전송하는 장치). 프로토콜 상세는 §3.4 참고.
 
 ### 1.4 그래픽·렌더 설정
 
@@ -119,61 +103,122 @@ python main.py
 
 ### 3.1 파일별 주요 메서드·함수
 
-| 파일 | 메서드/함수 | 역할 |
-|------|-------------|------|
-| **main.py** | `main` | `QApplication`, `EMGDashboard()`, `show()`, `exec()` |
-| **dashboard_ui.py** | `__init__` | 버퍼·스케일러·UI 초기화, 워커·타이머·시그널 연결 |
-| | `init_ui` | 좌/우 레이아웃, 설정·RAW·Diagonal·PWR 패널 배치 |
-| | `build_settings_panel` | 포트, Refresh, START/STOP, Window Size, Channels(4ch/6ch), 상태 라벨 |
-| | `build_raw_plot_panel` | RAW 플롯, Line/Fill 라디오, 채널별 라인·막대·커서 생성 |
-| | `build_diag_panel` | Diagonal Vector 플롯, 가이드 라인, diag_lines N_CH개 |
-| | `build_pwr_panel` | PWR PlotWidget, BarGraphItem(N_CH+1), CH0~CH(N-1)·AVG 틱 |
-| | `render` | `graph_render.render(win)` 호출 |
-| | `on_sample` | raw/amp 수신 시 버퍼·ptr·스케일러 갱신, CSV write_row |
-| | `start_serial` | 버퍼 초기화, scale_manager.reset(), CSVLogger 생성(옵션), worker.configure·start, set_running_ui(True) |
-| | `stop_serial` | worker.stop·wait, csv_logger.close, set_running_ui(False) |
-| | `set_running_ui` | START/STOP/포트/Refresh/Window Size/Channels 활성·비활성 |
-| **serial_worker.py** | `parse_line(line)` | 한 줄에서 숫자 추출, 마지막 N_CH개 float 반환 (여러 센서/채널 수 대응) |
-| | `compute_amp_from_samples(sample_buf)` | deque → 채널별 (max−min) amp 배열 반환 |
-| | `run` | 시리얼 열기, `in_waiting` 읽기, 줄 단위 split, 파싱·AMP 계산·sig_sample |
-| | `update_params(n_mult)` | n_samples = BASE_SAMPLES * n_mult, sample_buf 재생성 |
-| **graph_render.py** | `render(win)` | is_running·sample_count 검사 후 update_raw_graph, update_diag_vector, update_power_info |
-| | `update_raw_graph(win, ...)` | 채널별 height_buf 계산, Line/Bar 분기, get_scaled_array로 Y, 커서 위치 |
-| | `update_diag_vector(win)` | 채널별 최근 100샘플, get_vector_intensity·방향 벡터, diag_lines setData |
-| | `update_power_info(win)` | get_vector_intensity → 비율 0~100%, bar_item 높이·AVG |
-| **emg_scale.py** | `_data_range_and_half_height()` | has_data 채널의 global_min/max → data_range, allowed_half_height 반환 |
-| | `get_scaled_array(ch_idx, raw_array)` | effective_raw(0→RAW_ZERO_REF), 비율·clip, base_offset + 비율*반높이 |
-| | `get_vector_intensity(ch_idx, amp_value)` | dynamic_half_range, 0~1 강도 반환 |
-| **logger.py** | `write_row(raw_vals, amp_vals, timestamp)` | 버퍼에 추가, buffer_size 도달 시 flush |
-| | `flush`, `close` | writerows·file.flush, 파일 닫기 |
+파일마다 누가 무엇을 하는지를 보여줍니다. 
+
+**main.py**
+
+| 메서드 | 역할 |
+|--------|------|
+| `main` | QApplication 생성, EMGDashboard 생성·표시, 이벤트 루프 실행 |
+
+**dashboard_ui.py**
+
+| 메서드 | 역할 |
+|--------|------|
+| `__init__` | 버퍼·스케일러·UI 초기화, 워커·타이머·시그널 연결 |
+| `init_ui` | 좌/우 레이아웃, 설정·RAW·Diagonal·PWR 패널 배치 |
+| `build_settings_panel` | 포트, Refresh, START/STOP, Window Size, 상태 라벨 |
+| `build_raw_plot_panel` | RAW 플롯, Line/Fill 라디오, 채널별 라인·막대·커서 |
+| `build_diag_panel` | Diagonal Vector 플롯, 가이드 라인, diag_lines N_CH개 |
+| `build_pwr_panel` | PWR PlotWidget, BarGraphItem(N_CH+1), CH0~AVG 틱 |
+| `render` | graph_render.render(win) 호출 |
+| `on_sample` | raw/amp 수신 → 버퍼·스케일러 갱신, 동적 버퍼 조정, CSV 기록 |
+| `start_serial` | 버퍼 초기화, scale_manager.reset(), CSVLogger(옵션), worker 시작 |
+| `stop_serial` | worker 중지·대기, csv_logger 종료 |
+| `set_running_ui` | START/STOP/포트/Refresh/Window Size 활성·비활성 |
+
+**serial_worker.py**
+
+| 메서드 | 역할 |
+|--------|------|
+| `parse_line(line)` | 한 줄에서 숫자 추출. 4개 또는 6개일 때만 (값 리스트, 개수) 반환 |
+| `compute_amp_from_samples(sample_buf)` | deque → 채널별 (max−min) 진폭 배열 |
+| `run` | 시리얼 열기, 줄 단위 읽기·파싱, AMP 계산, sig_sample·sig_channel_detected 발송 |
+| `update_params(n_mult)` | n_samples·sample_buf 재설정 |
+
+**graph_render.py**
+
+| 메서드 | 역할 |
+|--------|------|
+| `render(win)` | is_running·sample_count 확인 후 RAW/Diagonal/PWR 갱신 |
+| `update_raw_graph(win, ...)` | height_buf 계산, Line/Bar 분기, Y 좌표·커서 |
+| `update_diag_vector(win)` | 채널별 최근 100샘플, 방향 벡터, diag_lines setData |
+| `update_power_info(win)` | get_vector_intensity → 0~100% 막대 높이·AVG |
+
+**emg_scale.py**
+
+| 메서드 | 역할 |
+|--------|------|
+| `_data_range_and_half_height()` | 전 채널 global_min/max → data_range, allowed_half_height |
+| `get_scaled_array(ch_idx, raw_array)` | raw → 비율 → Y 좌표 (공통 data_range 기준) |
+| `get_vector_intensity(ch_idx, amp_value)` | 진폭 → 0~1 강도 (Diagonal·PWR용) |
+
+**logger.py**
+
+| 메서드 | 역할 |
+|--------|------|
+| `write_row(...)` | 한 행 버퍼 추가, buffer_size 도달 시 flush |
+| `flush`, `close` | writerows·파일 닫기 |
+
+---
 
 ### 3.2 동작 흐름 (요약)
 
-1. **기동**: main → EMGDashboard 생성 → init_ui → 타이머 start, refresh_ports.
-2. **START**: start_serial → 버퍼 초기화, worker.configure(port, 115200, n_mult), worker.start() → run() 진입.
-3. **수신 루프**(SerialWorker): in_waiting 읽기 → 줄 단위 split → parse_line → sample_buf.append, n_samples개마다 compute_amp_from_samples → sig_sample.emit(raw_vals, last_amp).
-4. **UI 수신**: on_sample → raw_np_buf[:, ptr] = raw_vals, scale_manager.scalers[i].update(raw_vals[i]), ptr 증가, CSV write_row.
-5. **렌더 루프**: QTimer.timeout → render(win) → update_raw_graph, update_diag_vector, update_power_info (is_running·sample_count 확인 후).
-6. **STOP**: stop_serial → worker.stop(), wait, csv_logger.close, set_running_ui(False).
+앱이 켜진 뒤부터 데이터가 화면에 나올 때까지의 순서입니다.
+
+| 단계 | 내용 |
+|------|------|
+| **1. 기동** | main → EMGDashboard 생성 → init_ui → 타이머 start, refresh_ports |
+| **2. START** | start_serial → 버퍼 초기화, worker.configure·start → run() 진입 |
+| **3. 수신 루프** | SerialWorker: 시리얼 읽기 → 줄 단위 split → parse_line → sample_buf에 누적, n_samples마다 진폭 계산 → sig_sample.emit(raw_vals, last_amp) |
+| **4. UI 수신** | on_sample: raw_np_buf 기록, scale_manager 갱신, ptr·링 버퍼 처리, 1초마다 수신 속도로 버퍼 길이 조정, CSV 기록 |
+| **5. 렌더** | QTimer → render(win) → update_raw_graph, update_diag_vector, update_power_info (is_running·sample_count 확인 후) |
+| **6. STOP** | stop_serial → worker.stop·wait, csv_logger.close, set_running_ui(False) |
+
+---
 
 ### 3.3 스레드 안정성
 
-- **시리얼·파싱·진폭**: 모두 `SerialWorker`(QThread) 내부에서 수행. UI 스레드에서는 시그널로만 데이터 수신.
-- **버퍼·스케일러 갱신**: `on_sample`이 메인 스레드에서 호출되므로, `raw_np_buf`·`ptr`·`scale_manager` 수정은 메인 스레드에서만 발생.
-- **렌더**: 타이머가 메인 스레드에서 `render`를 호출하고, `win`의 버퍼는 읽기만 하므로 레이스 없음. 시리얼 스레드는 버퍼를 쓰지 않음(시그널로 값만 전달).
+어떤 일이 어느 스레드에서 일어나는지를 보여줍니다. 
+
+| 담당 | 스레드 | 설명 |
+|------|--------|------|
+| 시리얼 수신·파싱·진폭 계산 | SerialWorker (QThread) | UI는 시그널로만 데이터 수신 |
+| 버퍼·스케일러 갱신 | 메인 스레드 | on_sample에서만 raw_np_buf·ptr·scale_manager 수정 |
+| 렌더 | 메인 스레드 | 타이머가 render 호출, win 버퍼는 읽기 전용 → 레이스 없음 |
+
+---
 
 ### 3.4 시리얼 프로토콜
 
-- **텍스트 (구현됨)**: 한 줄에 N_CH개 실수(공백 구분), `\n` 종료. 4ch면 4개, 6ch면 6개.
-- **parse_line**: `re.findall(r'[-+]?\d*\.\d+|\d+', line)`로 숫자 추출 후 마지막 N_CH개를 float 리스트로 반환. N_CH개 미만이면 None.
-- **이진 23 bytes (문서화만, 미구현)**: 헤더 2 + 데이터 20 + 체크섬 1 (XOR). 별도 파서 구현 시 적용.
+**데이터 형식 (텍스트, 구현됨)**
+
+- 한 줄: 공백으로 구분된 숫자 + 줄바꿈(`\n`).
+- 숫자 개수가 **4개**면 4채널, **6개**면 6채널로 자동 인식. 그 외는 무시.
+
+**파싱 (parse_line)**
+
+- 정규식으로 숫자만 추출.
+- 개수가 4 또는 6일 때만 `([float, ...], 개수)` 반환, 아니면 `None`.
+- 채널 수는 사용자 설정이 아니라 **줄당 값 개수**로만 결정.
+
+**채널 자동 감지**
+
+- SerialWorker가 첫 유효 줄에서 4 또는 6 감지 → `sig_channel_detected(n)` 발송.
+- 대시보드가 N_CH·UI 재구성. STOP 후 다시 START하면 첫 줄부터 다시 감지.
+
+**이진 23 bytes (문서화만, 미구현)**
+
+- 헤더 2 + 데이터 20 + 체크섬 1 (XOR).
+
+---
 
 ### 3.5 설정·실행 순서
 
-1. config 상수 로드 (import 시).
-2. EMGDashboard 생성: scale_manager(N_CH), raw_np_buf, x_axis, height_buf, cursor_rects, last_amp, worker, 타이머.
-3. init_ui: 패널 생성 순서 — settings → raw → diag → pwr; 좌측(settings, diag), 우측(raw, pwr).
-4. START 시: raw_np_buf.fill(0), height_buf.fill(1.5), ptr=0, is_buf_full=False, sample_count=0, start_time_ref, CSVLogger(옵션), worker.configure·start.
+1. **config 로드** — import 시 상수 로드.
+2. **EMGDashboard 생성** — scale_manager, raw_np_buf, x_axis, height_buf, cursor_rects, last_amp, worker, 타이머.
+3. **init_ui** — 패널 순서: settings → raw → diag → pwr. 좌측(settings, diag), 우측(raw, pwr).
+4. **START 시** — 버퍼 0·height_buf 1.5, ptr=0, is_buf_full=False, sample_count=0, start_time_ref, CSVLogger(옵션), worker.configure·start.
 
 ---
 
@@ -205,8 +250,8 @@ python main.py
 
 | 이름 | 타입 | 크기/형태 | 용도 |
 |------|------|-----------|------|
-| raw_np_buf | np.ndarray | (N_CH, max_display), float | RAW 시계열 링 버퍼. ptr로 기록 위치 관리 |
-| x_axis | np.ndarray | (max_display,) | 0 ~ PLOT_SEC*1000 ms 균등 분할, 한 번 생성 후 재사용 |
+| raw_np_buf | np.ndarray | (N_CH, max_display), float | RAW 시계열 링 버퍼. ptr로 기록 위치 관리. max_display는 수신 속도에 따라 동적 조정 |
+| x_axis | np.ndarray | (max_display,) | 0 ~ PLOT_SEC*1000 ms 균등 분할. 버퍼 리사이즈 시 새 길이로 재생성 |
 | height_buf | np.ndarray | (N_CH, max_display) | Bar 모드 구간별 막대 높이 캐시 |
 | last_amp | np.ndarray | (N_CH,) | 최근 진폭(채널별 max−min) |
 | sample_buf | deque | maxlen=n_samples | SerialWorker 내부, 최근 N샘플 (진폭 계산용) |
@@ -246,93 +291,20 @@ python main.py
   - 채널별 “자기 관측 범위 대비” 비율.
 - **RAW Bar**: 구간별 (ch_max−ch_min) / (data_range/2) 비율로 막대 높이. Line과 동일한 공통 data_range 사용 → 채널 간 비교 일치.
 
----
-
-## 6. 개발 과정에서의 문제와 해결
-
-### 6.1 조이스틱 → 대각선 벡터(Diagonal Vector) 명칭 통일
-
-- **문제**: 코드·문서에 “joystick”이 남아 있어, 실제 기능(대각선 방향 벡터)과 불일치.
-- **해결**:  
-  - emg_scale: `get_joystick_intensity` → `get_vector_intensity`.  
-  - dashboard_ui: `build_joystick_panel` → `build_diag_panel`, `panel_joy` → `panel_diag`, `joy_plot` → `diag_plot`, `plot_limit` → `diag_plot_limit`, `diag_lines`.  
-  - graph_render: `update_joystick_vector` → `update_diag_vector`, `joy_raw` → `diag_raw`, `win.diag_plot_limit`.  
-  - MODULES/README: “조이스틱” → “대각선 벡터” 문구 통일.
-
-### 6.2 PWR 바를 절대값이 아닌 비율로 표시
-
-- **문제**: PWR 막대가 last_amp를 0~100 clamp한 절대값이라, 채널 간 “채워진 정도” 비교가 어려움.
-- **해결**: update_power_info에서 채널별 get_vector_intensity(0~1)를 구한 뒤 ×100으로 막대 높이(0~100%) 사용. AVG는 N_CH개 채널 비율의 평균.
-
-### 6.3 MODULES.md 가독성·역할 분리
-
-- **문제**: MODULES.md가 너무 길고, README와 “프로젝트 구조 표” 등이 겹침.
-- **해결**:  
-  - MODULES에 목차 추가, 헤딩 계층 ##/### 통일, “조이스틱” 문구 제거.  
-  - README는 “소개·설치·실행·프로토콜·문서 링크”만 두고, “프로젝트 구조 표”는 MODULES로만.  
-  - MODULES 상단에 “레포 소개·설치·실행은 README 참고” 안내 추가.
-
-### 6.4 시리얼 프로토콜 문서화
-
-- **문제**: 실제 프로토콜(23 bytes: 헤더 2, 데이터 20, 체크섬 1 XOR)이 문서에 없음.
-- **해결**: README와 MODULES에 “시리얼 프로토콜” 섹션 추가. 표로 구간·길이·설명 정리. MODULES의 serial_worker 설명에 23바이트 프레임 및 링크 추가.
-
-### 6.5 그래프 하단 RAW/AMP 라벨 제거
-
-- **문제**: RAW 그래프 하단 “RAW: [0,0,0,0]”, PWR 하단 “AMP: ... AVG=...” 라벨이 불필요하게 차지.
-- **해결**: dashboard_ui에서 lbl_rawnums·lbl_pwr 생성 및 레이아웃 추가 제거. graph_render.update_power_info에서 해당 setText 호출 제거.
-
-### 6.6 신호 없음(0)일 때 RAW Line 위치를 “100”으로 통일
-
-- **문제**: raw=0일 때 채널마다 baseline이 달라 세로 위치가 제각각.
-- **해결**: config에 RAW_ZERO_REF=100, RAW_ZERO_THRESHOLD=1.0 추가. get_scaled_array에서 raw_array ≤ RAW_ZERO_THRESHOLD(1.0)인 구간을 RAW_ZERO_REF(100)으로 치환한 effective_raw로 비율 계산 → “각 오프셋에서 100 위치”에 플롯.
-
-### 6.7 4ch / 6ch 모드 전환 가능 여부
-
-- **질문**: 4채널·6채널을 모드로 전환해 RAW/Vector/PWR을 4개·6개로 바꿀 수 있는지.  
-- **결론**: 가능. 헤더에 4/6을 두고, 헤더 값에 따라 데이터 길이·파싱·UI 채널 수(N)를 결정하면 됨. 4채널 전용 센서와 6채널 전용 센서가 완전히 달라도, “한 프레임에 오는 값 개수”만 맞추면 동일 구조로 지원 가능.
-
-### 6.8 .gitignore 추가
-
-- **문제**: venv, __pycache__, data/*.csv 등이 버전 관리에 포함될 수 있음.
-- **해결**: .gitignore에 .venv/, __pycache__/, *.pyc, data/*.csv, *.log, .env, .idea/, .vscode/, .DS_Store 등 추가.
 
 ---
 
-## 7. 기타 참고 사항
-
-### 7.1 문서 간 역할
-
-- **README.md**: 프로젝트 소개, 요구사항, 설치·실행, 시리얼 프로토콜 요약, MODULES 링크.
-- **MODULES.md**: 구조·흐름·동적 스케일링·모듈 역할·코드 흐름 상세. 실행 방법은 README 참고.
-- **본 문서(PROJECT_DOCUMENTATION.md)**: 개발 환경, 아키텍처, 핵심 로직, UI, 알고리즘을 한곳에 정리. 4ch/6ch 모드 지원.
-
-### 7.2 채널 모드 (4ch/6ch)
-
-- SETTINGS 패널의 **Channels** 콤보박스로 4ch/6ch 선택. 연결 해제 후에만 변경 가능.
-- 변경 시 `reinit_channel_mode()`로 버퍼·플롯·스케일러·SerialWorker를 N_CH 기준으로 재생성.
-- RAW: N개 라인·막대·커서 생성. Y 범위 N*CH_OFFSET. (이미 구현됨)
-- Diagonal Vector: 방향을 360°/N 간격으로 계산(4→90°, 6→60°). diag_lines N개.
-- PWR: BarGraphItem N+1개, ticks CH0~CH(N-1), AVG. CH_COLORS 6개 확장.
-- serial_worker: N에 따라 파싱 개수·프레임 길이 분기.
-
-### 7.3 상수 변경 시 주로 수정하는 파일
-
-- 채널 수·색·오프셋·FPS·플롯 길이: `config.py`.
-- 파싱·채널 수: `serial_worker.py` (parse_line, compute_amp_from_samples, N_CH).
-- 스케일 공식: `emg_scale.py`.  
-- RAW/Vector/PWR 시각 요소: `graph_render.py`, `dashboard_ui.py` (build_*_panel).
-
----
-
-## 8. 설정값·상수 일람
+## 6. 설정값·상수 일람
 
 | 구분 | 이름 | 값 | 위치 | 설명 |
 |------|------|-----|------|------|
-| **공통** | N_CH, CH_MODE | 4 | config | 채널 수 (4ch/6ch 전환 가능) |
+| **공통** | N_CH | 4 | config | 채널 수 초기값. 실제는 START 시 첫 줄에서 4 또는 6 자동 감지 |
 | | FPS | 30 | config | 렌더 주기(Hz), 타이머 간격 = 1000/FPS ms |
-| | PLOT_SEC | 5.0 | config | RAW X축 표시 구간(초) |
-| | max_display | 5000 | dashboard_ui | RAW 링 버퍼·x_axis 샘플 수 |
+| | PLOT_SEC | 5.0 | config | RAW에 표시할 시간(초). 버퍼 길이 = rate×PLOT_SEC 로 동적 조정 |
+| | max_display | 2000 초기 | dashboard_ui | RAW 링 버퍼·x_axis 샘플 수. 수신 속도에 따라 1초마다 재계산·리사이즈 |
+| | MIN_BUF, MAX_BUF | 100, 100000 | config | 동적 버퍼 길이 하한·상한 |
+| | RATE_UPDATE_INTERVAL | 1.0 | config | 수신 속도 재계산 주기(초) |
+| | BUF_RESIZE_THRESHOLD | 0.15 | config | 현재 버퍼와 이 비율 이상 차이 날 때만 리사이즈 |
 | **시리얼/신호** | BASE_SAMPLES | 5 | config | 진폭 윈도우 기본 샘플 수 |
 | | N_MULT_DEFAULT | 10 | config | n_samples = BASE_SAMPLES * n_mult |
 | | (진폭 계산 주기) | n_samples | serial_worker | n_samples개 들어올 때마다 진폭 재계산 |
@@ -356,7 +328,7 @@ python main.py
 
 ---
 
-## 9. 용어 정의
+## 7. 용어 정의
 
 | 용어 | 설명 |
 |------|------|
@@ -373,11 +345,12 @@ python main.py
 
 ---
 
-## 10. 시그널·슬롯·이벤트
+## 8. 시그널·슬롯·이벤트
 
 | 시그널/이벤트 | 소스 | 슬롯/동작 |
 |---------------|------|-----------|
-| sig_sample | SerialWorker | on_sample → 버퍼·ptr·스케일러·CSV 갱신 |
+| sig_sample | SerialWorker | on_sample → 버퍼·ptr·스케일러·동적 버퍼 조정·CSV 갱신 |
+| sig_channel_detected | SerialWorker | on_channel_detected → N_CH 갱신·reinit_channel_mode (UI만 n채널로 재구성) |
 | sig_status | SerialWorker | set_status → lbl_status 텍스트·색상 |
 | sig_error | SerialWorker | on_error → QMessageBox.critical, stop_serial |
 | QTimer.timeout | QTimer | render → graph_render.render(win) |
@@ -388,7 +361,7 @@ python main.py
 
 ---
 
-## 11. RAW 링 버퍼·구간 분리
+## 9. RAW 링 버퍼·구간 분리
 
 - **버퍼**: raw_np_buf (N_CH, max_display). 매 샘플마다 raw_np_buf[:, ptr] = raw_vals, ptr += 1. ptr가 max_display에 도달하면 ptr=0, is_buf_full=True.
 - **과거/현재 분리 (Line 모드)**: is_buf_full == True일 때 과거 = x_axis[ptr:], raw_np_buf[i, ptr:] → past_lines. 현재 = x_axis[:ptr], raw_np_buf[i, :ptr] → raw_lines. is_buf_full == False일 때 past_lines는 빈 데이터, 현재만 raw_lines에.
@@ -397,7 +370,7 @@ python main.py
 
 ---
 
-## 12. ChannelScaler·baseline 로직 상세
+## 10. ChannelScaler·baseline 로직 상세
 
 - **초기값**: current_min = RAW_Y_MIN_INIT(55), current_max = RAW_Y_MAX_INIT(100), baseline = (min+max)/2. has_data = False.
 - **update(raw_value)**: raw_value ≤ RAW_ZERO_THRESHOLD(1.0)이면 return(0은 min/max 갱신에서 제외). has_data = True. raw_value > current_max → current_max 갱신. raw_value < current_min → current_min 갱신. 그 외 → decay로 current_max/current_min 수축. target_baseline = (current_max + current_min)/2, baseline 스무딩(baseline_alpha).
@@ -405,7 +378,7 @@ python main.py
 
 ---
 
-## 13. Diagonal Vector 수식
+## 11. Diagonal Vector 수식
 
 - **방향 (4채널)**: (-0.707,-0.707), (-0.707,0.707), (0.707,0.707), (0.707,-0.707).
 - **최근 100샘플**: ptr ≥ DATA_LEN(100)이면 diag_raw = raw_np_buf[i, ptr−100:ptr]. ptr < 100이면: is_buf_full이 True일 때 raw_np_buf[i, −100+ptr:] 와 raw_np_buf[i, :ptr]를 concatenate해 100개로 채움. is_buf_full이 False일 때는 diag_raw = raw_np_buf[i, :ptr]만 사용(길이 < 100). diag_raw.size < 2이면 해당 채널은 스킵(continue).
@@ -416,7 +389,7 @@ python main.py
 
 ---
 
-## 14. CSV 로거 상세
+## 12. CSV 로거 상세
 
 - **생성**: START 시 ENABLE_CSV_LOGGING이 True면 CSVLogger(buffer_size=500). directory 기본 "data".
 - **파일명**: data/YYYYMMDD_HHMMSS_emg.csv.
@@ -426,7 +399,7 @@ python main.py
 
 ---
 
-## 15. 에러 처리·종료
+## 13. 에러 처리·종료
 
 - **시리얼 열기 실패**: run() 내 try에서 실패 시 sig_error.emit, return. on_error에서 QMessageBox.critical, stop_serial.
 - **파싱 실패**: 줄 단위 try/except, 개별 라인 실패 시 무시.
@@ -436,57 +409,4 @@ python main.py
 
 ---
 
-## 16. 데이터 범위가 다른 센서(동적 스케일 요약)
-
-- **RAW Line**: 전 채널 공통 data_range. 같은 raw 변동폭이면 같은 세로 폭. baseline만 채널별.
-- **RAW Bar**: 구간별 변동폭을 Line과 동일한 data_range/2 기준 비율로 막대 높이. 채널 간 비교 일치.
-- **Diagonal Vector·PWR**: 채널별 dynamic_half_range. 각 채널이 자기 관측 범위 대비 비율. 공통 data_range 미사용.
-
----
-
-## 17. 제한 사항·알려진 이슈
-
-- **채널 수**: 4ch/6ch 모드 지원. Channels 콤보로 전환 가능(연결 해제 후).
-- **파싱**: 텍스트(한 줄 N_CH개 실수 + \n)만 지원. 23바이트 이진은 미구현.
-- **진폭 초기**: sample_buf가 n_samples 미만일 때 last_amp는 이전 값 유지.
-- **CSV**: 헤더·컬럼이 config.N_CH 기준(동적).
-
----
-
-## 18. 초기화·생성 순서 상세
-
-- **EMGDashboard __init__ 순서**: 상수·버퍼·스케일러·CSV 플래그 초기화 후 **init_ui()** 호출. init_ui() 안에서 raw_plot, diag_plot, pwr_plot 등이 생성됨. **raw_plot은 build_raw_plot_panel()에서 생성**되므로, **init_ui() 호출이 끝난 뒤**에만 raw_plot이 존재함.
-- **cursor_rects**: init_ui() **이후**, for i in range(N_CH)로 채널별 ScatterPlotItem을 만들어 **raw_plot.addItem(rect)** 로 추가. 즉 cursor_rects는 raw_plot이 만들어진 다음에만 붙일 수 있음.
-- **set_running_ui(False)**: __init__ 마지막에 한 번 호출해 초기 상태(미연결)에서 START만 활성화, STOP/포트/Refresh/Window Size는 비활성.
-
----
-
-## 19. 시리얼 수신·파싱 로직 상세
-
-- **_buf (bytearray)**: 수신 바이트를 계속 누적. **b"\\n" in self._buf**일 때까지 read한 데이터를 _buf에 append.
-- **줄 분리**: `b"\\n" in self._buf`이면 **split(b"\\n", 1)** 로 첫 번째 줄만 꺼냄. 나머지 바이트는 _buf에 남김. 꺼낸 줄은 **decode(errors="ignore").strip()**.
-- **빈 줄·파싱 실패**: strip 결과가 빈 문자열이면 continue. **parse_line(s)** 호출해 실패(반환 None 등)하면 continue. 성공 시에만 sig_sample 등 후속 처리.
-- **calc_counter / last_amp**: n_samples개마다 compute_amp_from_samples 호출 후 last_amp 갱신. calc_counter는 샘플 개수 카운트용. cleanup() 시 _buf 초기화, 시리얼 닫기, 시그널만 DISCONNECTED.
-
----
-
-## 20. RAW Bar 모드 갭·표시 로직 상세
-
-- **unified_x_ms**: render()에서 **unified_x_ms = win.x_axis[win.ptr % win.max_display]** 로 "현재 시간축 위치"를 구함. Bar 모드에서 last_x 계산 시, win.sample_count > 0이 아니면 unified_x_ms를 사용해 막대 X 위치를 맞춤.
-- **gap_start**: **gap_start = win.ptr // step** (step은 Bar 구간 크기, 예: 30). "현재 ptr이 속한 구간"의 인덱스.
-- **갭 목적**: "지금 기록 중인 구간"을 막대 높이 0으로 비워서 커서처럼 보이게 함.
-- **is_buf_full == False**: **display_heights[gap_start:] = 0**. 아직 한 바퀴 안 채웠으므로 gap_start 이후 구간은 비움.
-- **is_buf_full == True**: **(gap_start + g) % len(display_heights)** 인덱스들(g는 0 ~ gap_range−1)을 0으로 설정. 링 구조에 맞춰 "현재 기록 구간"만 갭으로 표시.
-
----
-
-## 21. 기타 로직·동작 상세
-
-- **RAW 패널 헤더 레이아웃**: build_raw_plot_panel에서 카드의 첫 번째 위젯(제목 라벨)을 **lay.itemAt(0).widget()**으로 꺼내 **header_layout**에 넣고, Line/Fill 라디오 버튼을 같은 header_layout에 추가. 제목과 모드 선택이 **한 줄**에 오도록 함.
-- **compute_amp_from_samples 반환값**: 채널별 진폭 배열 **amp** (np.ndarray). 샘플 버퍼가 비어 있으면 np.zeros(config.N_CH) 반환.
-- **PWR bar_item**: x = np.arange(N_CH+1). update_power_info에서는 setOpts(height=...)만 갱신. N_CH+1개 막대(CH0~CH(N-1), AVG)의 X 위치는 고정, 높이만 갱신.
-- **start_time_ref**: **start_serial()**에서 **start_time_ref = time.time()** 설정. on_sample()에서 CSV용 상대 시간(ms)은 **(time.time() - start_time_ref) * 1000** 으로 계산해 write_row에 전달.
-
----
-
-*이 문서는 EMG Dashboard 기준으로 작성되었으며, 4ch/6ch 모드는 SETTINGS 패널 Channels 콤보로 전환 가능하다. 프로토콜 변경 시 MODULES.md를 참고하면 된다.*
+*이 문서는 EMG Dashboard 기준으로 작성되었으며, 4ch/6ch는 시리얼 한 줄의 숫자 개수(4 또는 6)로 자동 감지한다. 프로토콜·채널 동작 변경 시 MODULES.md와 serial_worker.py를 참고하면 된다.*

@@ -12,7 +12,7 @@ class ChannelScaler:
         self.has_data = False
 
         self.baseline_alpha = 0.05
-        self.decay_alpha = 0.00001
+        self.decay_alpha = 0.000001
 
     # 스케일 정보를 초기 상태로 리셋
     def reset(self):
