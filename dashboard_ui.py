@@ -6,8 +6,8 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QComboBox, QFrame, QSpinBox, QMessageBox,
-    QRadioButton,
+    QLabel, QPushButton, QComboBox, QCheckBox, QFrame, QSpinBox, QMessageBox,
+    QRadioButton, QButtonGroup, QStackedWidget,
 )
 
 import config
@@ -23,6 +23,9 @@ from config import (
     COLOR_BG, COLOR_CARD_BORDER,
     COLOR_STATUS_CONNECTED, COLOR_STATUS_DISCONNECTED,
     MIN_BUF, MAX_BUF, RATE_UPDATE_INTERVAL, BUF_RESIZE_THRESHOLD,
+    FIRST_RESIZE_AFTER_SEC,
+    RAW_SAMPLE_RATE_DEFAULT,
+    FFT_MAX_HZ,
 )
 from serial_worker import SerialWorker
 from graph_render import render as render_impl
@@ -38,9 +41,10 @@ class EMGDashboard(QMainWindow):
 
         self.scale_manager = EMGScaleManager(n_channels=config.N_CH)
         self.n_mult = int(N_MULT_DEFAULT)
+        self.view_mode = "raw"
 
-        # RAW 버퍼: 초기값은 2000, START 후 수신 속도에 따라 "최근 PLOT_SEC초" 분량으로 동적 조정
-        self.max_display = 2000
+        # RAW 버퍼: 초기값 = 예상 rate × PLOT_SEC (5초 분량), START 후 실제 수신 속도로 동적 조정
+        self.max_display = max(MIN_BUF, min(MAX_BUF, int(round(RAW_SAMPLE_RATE_DEFAULT * PLOT_SEC))))
         self.raw_np_buf = np.zeros((config.N_CH, self.max_display))
         self.x_axis = np.linspace(0, PLOT_SEC * 1000, self.max_display)
         self._last_rate_update_time = 0.0
@@ -86,6 +90,60 @@ class EMGDashboard(QMainWindow):
         self.btn_refresh.setEnabled(not running)
         self.sp_nmult.setEnabled(not running)
         self.is_running = running
+
+    def _apply_raw_line(self):
+        """Line 선택 → Raw 라인 뷰로 바로 전환"""
+        if getattr(self, "view_mode", None) == "raw" and getattr(self, "rb_line", None) and self.rb_line.isChecked():
+            return
+        self.view_mode = "raw"
+        if hasattr(self, "stacked_plots"):
+            self.stacked_plots.setCurrentIndex(0)
+        if hasattr(self, "rb_line") and hasattr(self, "rb_fill") and hasattr(self, "rb_fft"):
+            for rb in (self.rb_line, self.rb_fill, self.rb_fft):
+                rb.blockSignals(True)
+            self.rb_line.setChecked(True)
+            self.rb_fill.setChecked(False)
+            self.rb_fft.setChecked(False)
+            for rb in (self.rb_line, self.rb_fill, self.rb_fft):
+                rb.blockSignals(False)
+        if self.graph_panel_title_label:
+            self.graph_panel_title_label.setText("RAW GRAPH (Dynamic Auto-Scaling)")
+
+    def _apply_raw_fill(self):
+        """Fill 선택 → Raw Bar 뷰로 바로 전환"""
+        if getattr(self, "view_mode", None) == "raw" and getattr(self, "rb_fill", None) and self.rb_fill.isChecked():
+            return
+        self.view_mode = "raw"
+        if hasattr(self, "stacked_plots"):
+            self.stacked_plots.setCurrentIndex(0)
+        if hasattr(self, "rb_line") and hasattr(self, "rb_fill") and hasattr(self, "rb_fft"):
+            for rb in (self.rb_line, self.rb_fill, self.rb_fft):
+                rb.blockSignals(True)
+            self.rb_line.setChecked(False)
+            self.rb_fill.setChecked(True)
+            self.rb_fft.setChecked(False)
+            for rb in (self.rb_line, self.rb_fill, self.rb_fft):
+                rb.blockSignals(False)
+        if self.graph_panel_title_label:
+            self.graph_panel_title_label.setText("RAW GRAPH (Dynamic Auto-Scaling)")
+
+    def _apply_fft(self):
+        """FFT 선택 → 주파수 시각화로 바로 전환"""
+        if getattr(self, "view_mode", None) == "fft":
+            return
+        self.view_mode = "fft"
+        if hasattr(self, "stacked_plots"):
+            self.stacked_plots.setCurrentIndex(1)
+        if hasattr(self, "rb_line") and hasattr(self, "rb_fill") and hasattr(self, "rb_fft"):
+            for rb in (self.rb_line, self.rb_fill, self.rb_fft):
+                rb.blockSignals(True)
+            self.rb_line.setChecked(False)
+            self.rb_fill.setChecked(False)
+            self.rb_fft.setChecked(True)
+            for rb in (self.rb_line, self.rb_fill, self.rb_fft):
+                rb.blockSignals(False)
+        if self.graph_panel_title_label:
+            self.graph_panel_title_label.setText("FFT (Frequency)")
 
     # 센서가 줄 단위로 보낸 개수(4 또는 6)로 채널 수 자동 감지
     def on_channel_detected(self, n: int):
@@ -161,6 +219,17 @@ class EMGDashboard(QMainWindow):
             line = pg.PlotCurveItem()
             self.diag_lines.append(line)
             self.diag_plot.addItem(line)
+
+        # FFT Plot 라인 및 Y축 범위 재생성 (채널 수에 맞게)
+        for line in self.fft_lines:
+            self.fft_plot.removeItem(line)
+        self.fft_lines.clear()
+        y_max_fft = n * CH_OFFSET
+        self.fft_plot.setYRange(0, y_max_fft, padding=0)
+        self.fft_plot.getViewBox().setLimits(yMin=0, yMax=y_max_fft, minYRange=50, maxYRange=y_max_fft)
+        for i in range(n):
+            line = self.fft_plot.plot([], [], pen=pg.mkPen(color=get_ch_color(i), width=RAW_LINE_WIDTH))
+            self.fft_lines.append(line)
 
         # PWR Plot 재생성 
         self.pwr_plot.removeItem(self.bar_item)
@@ -284,7 +353,7 @@ class EMGDashboard(QMainWindow):
 
         lay.addLayout(row_btn)
 
-        # Window Size 설정
+        # Window Size + View 모드 (시작 전에만 변경 가능)
         row_form = QHBoxLayout()
         row_form.addWidget(QLabel("Window Size:"))
         self.sp_nmult = QSpinBox()
@@ -306,26 +375,34 @@ class EMGDashboard(QMainWindow):
         self.raw_lines = []
         self.bar_items = []
 
-        # 헤더 영역 (제목 + 모드 선택)
+        # 헤더 영역 (제목 + 모드 선택). 제목은 Raw/FFT 전환 시 문구만 바꿈
         header_layout = QHBoxLayout()
-
+        self.graph_panel_title_label = None
         if lay.count() > 0:
             header_label = lay.itemAt(0).widget()
             if header_label:
+                self.graph_panel_title_label = header_label
                 header_layout.addWidget(header_label)
 
-        header_layout.addStretch()  # 오른쪽으로 밀기 
+        header_layout.addStretch()  # 오른쪽으로 밀기
 
+        # Line / Fill / FFT 중 하나 선택 시 해당 뷰로 바로 전환
         self.rb_line = QRadioButton("Line")
-        self.rb_fill = QRadioButton("Fill (Bar)")
-
-        self.rb_line.setChecked(True)   # 기본 모드(line)
-        
-        self.rb_line.setStyleSheet("color: white; font-weight: bold;")
-        self.rb_fill.setStyleSheet("color: white; font-weight: bold;")
-
+        self.rb_fill = QRadioButton("Fill")
+        self.rb_fft = QRadioButton("FFT")
+        self.rb_line.setChecked(True)
+        for rb in (self.rb_line, self.rb_fill, self.rb_fft):
+            rb.setStyleSheet("color: white; font-weight: bold;")
+        self.bg_display = QButtonGroup(self)
+        self.bg_display.addButton(self.rb_line)
+        self.bg_display.addButton(self.rb_fill)
+        self.bg_display.addButton(self.rb_fft)
+        self.rb_line.toggled.connect(lambda checked: self._apply_raw_line() if checked else None)
+        self.rb_fill.toggled.connect(lambda checked: self._apply_raw_fill() if checked else None)
+        self.rb_fft.toggled.connect(lambda checked: self._apply_fft() if checked else None)
         header_layout.addWidget(self.rb_line)
         header_layout.addWidget(self.rb_fill)
+        header_layout.addWidget(self.rb_fft)
 
         lay.addLayout(header_layout)
         
@@ -380,8 +457,32 @@ class EMGDashboard(QMainWindow):
             self.bar_items.append(bar)
             bar.setVisible(False)
 
-        # 레이아웃에 PlotWidget 추가 
-        lay.addWidget(self.raw_plot, 1)
+        # Raw / FFT 전환용 스택
+        self.stacked_plots = QStackedWidget()
+        self.stacked_plots.addWidget(self.raw_plot)
+
+        # FFT 플롯 (RAW처럼 채널별 Y 오프셋으로 분리 표시)
+        self.fft_plot = pg.PlotWidget()
+        self.fft_plot.setBackground(COLOR_BG)
+        self.fft_plot.hideButtons()
+        self.fft_plot.getAxis("left").setStyle(showValues=False)
+        self.fft_plot.getAxis("bottom").enableAutoSIPrefix(False)
+        self.fft_plot.setLabel("bottom", "Frequency", units="Hz")
+        y_max_fft = config.N_CH * CH_OFFSET
+        self.fft_plot.setXRange(0, FFT_MAX_HZ, padding=0)
+        self.fft_plot.setYRange(0, y_max_fft, padding=0)
+        vb_fft = self.fft_plot.getViewBox()
+        vb_fft.setLimits(xMin=0, xMax=FFT_MAX_HZ, yMin=0, yMax=y_max_fft, minYRange=50, maxYRange=y_max_fft)
+        self.fft_plot.setMouseEnabled(x=True, y=True)
+        self.fft_lines = []
+        for i in range(config.N_CH):
+            line = self.fft_plot.plot([], [], pen=pg.mkPen(color=get_ch_color(i), width=RAW_LINE_WIDTH))
+            self.fft_lines.append(line)
+        self.stacked_plots.addWidget(self.fft_plot)
+        # 초기: Line 선택 상태에 맞춰 Raw 뷰·제목 동기화
+        self._apply_raw_line()
+
+        lay.addWidget(self.stacked_plots, 1)
         return frame
 
 
@@ -475,18 +576,17 @@ class EMGDashboard(QMainWindow):
             self.ptr = 0
             self.is_buf_full = True
 
-        # 수신 속도 기반 동적 버퍼 크기 (최근 PLOT_SEC초만 표시, 1초 주기 재계산)
+        # 수신 속도 기반 버퍼 크기: START 후 FIRST_RESIZE_AFTER_SEC(2초) 시점에 한 번만 리사이즈
+        # 첫 리사이즈는 임계값 없이 항상 적용 → 한 화면이 정확히 5초가 되도록
         elapsed = time.time() - self.start_time_ref
-        if elapsed >= RATE_UPDATE_INTERVAL and elapsed > 0:
-            if (time.time() - self._last_rate_update_time) >= RATE_UPDATE_INTERVAL:
-                self._last_rate_update_time = time.time()
-                rate = self.sample_count / elapsed
-                new_len = int(round(rate * PLOT_SEC))
-                new_len = max(MIN_BUF, min(MAX_BUF, new_len))
-                if new_len != self.max_display and (
-                    abs(new_len - self.max_display) / max(self.max_display, 1) > BUF_RESIZE_THRESHOLD
-                ):
-                    self._resize_raw_buffers(new_len)
+        if not self._has_resized_once and elapsed >= FIRST_RESIZE_AFTER_SEC and elapsed > 0:
+            self._has_resized_once = True
+            self._last_rate_update_time = time.time()
+            rate = self.sample_count / elapsed
+            new_len = int(round(rate * PLOT_SEC))
+            new_len = max(MIN_BUF, min(MAX_BUF, new_len))
+            if new_len != self.max_display:
+                self._resize_raw_buffers(new_len)
         
         # csv 로깅 처리 
         if self.csv_logger:
@@ -508,6 +608,7 @@ class EMGDashboard(QMainWindow):
         self.sample_count = 0
         self.start_time_ref = time.time()
         self._last_rate_update_time = self.start_time_ref
+        self._has_resized_once = False  # START당 리사이즈 1회만
 
         # RAW 뷰를 채널 수에 맞게 0~y_max로 설정 (4ch/6ch 모두 전체 채널 보이도록)
         y_max = config.N_CH * CH_OFFSET

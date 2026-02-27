@@ -1,14 +1,17 @@
 import math
 
-N_CH = 4  # 초기값, START 시 첫 줄에서 4 또는 6으로 자동 감지
+N_CH = 4
 FPS = 30
-PLOT_SEC = 5.0  # RAW 그래프에 표시할 시간(초), 버퍼는 수신 속도에 따라 동적 조정
+PLOT_SEC = 5.0
 
-# [RAW 버퍼 동적 크기] 수신 속도에 따라 "최근 PLOT_SEC초"만 유지
 MIN_BUF = 100
 MAX_BUF = 100000
-RATE_UPDATE_INTERVAL = 1.0  # 속도 재계산 주기(초)
-BUF_RESIZE_THRESHOLD = 0.15  # 이 비율만큼 차이 날 때만 리사이즈 
+RATE_UPDATE_INTERVAL = 1.0
+BUF_RESIZE_THRESHOLD = 0.15
+# 첫 리사이즈 전 대기 시간(초). 5초 뒤 한 번만 리사이즈
+FIRST_RESIZE_AFTER_SEC = 5.0
+# 수신 속도 측정 전 RAW 버퍼 초기 크기 = 이 값 × PLOT_SEC (5초 분량 가정)
+RAW_SAMPLE_RATE_DEFAULT = 500  # Hz
 
 # [시리얼/신호 처리]
 ENABLE_CSV_LOGGING = True
@@ -17,6 +20,7 @@ N_MULT_DEFAULT = 10
 
 # [RAW 그래프 스케일]
 CH_OFFSET = 100
+BAR_INTERVAL_MS = 30
 RAW_Y_MIN_INIT = 55
 RAW_Y_MAX_INIT = 100
 RAW_ZERO_REF = 100
@@ -57,3 +61,12 @@ def get_diag_directions():
 
 
 SUM_BAR_COLOR = "#9fb3ff"
+
+# [FFT 시각화]
+FFT_WINDOW_SEC = 0.8  # FFT에 쓸 구간 길이 (초)
+FFT_SAMPLE_RATE_DEFAULT = 1000  # 초기값: 수신속도 측정 전에만 사용 (Hz)
+FFT_MAX_HZ = 500
+FFT_APPLY_FILTER = True
+FFT_FILTER_OUT_RANGES = [(0, 5), (50, 60)]  # (low_hz, high_hz) 리스트
+# FFT 전체 진폭 배율 (1.0 = 현재 값 그대로, 0.5 = 절반 크기, 2.0 = 두 배)
+FFT_Y_GAIN = 0.3

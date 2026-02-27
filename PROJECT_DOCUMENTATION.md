@@ -70,7 +70,7 @@
 | **View + Controller** | `dashboard_ui.py` | 메인 윈도우, 패널·위젯 구성, 사용자 입력(START/STOP/포트/Window Size), 시그널 슬롯 연결, 타이머로 주기적 렌더 호출 |
 | **Model (데이터·스케일)** | `emg_scale.py`, 버퍼(`raw_np_buf`, `height_buf`, `last_amp` 등) | 채널별 min/max/baseline, 공통 data_range, 스케일/비율 계산; RAW·AMP 데이터 보관 |
 | **데이터 수집·파싱** | `serial_worker.py` | 시리얼 수신, 줄/프레임 파싱, 진폭 계산, 시그널로 UI에 전달 |
-| **시각화** | `graph_render.py` | RAW 그래프(Line/Bar), Diagonal Vector, PWR 막대의 좌표·아이템 갱신 (모델은 건드리지 않고 win 참조만) |
+| **시각화** | `graph_render.py` | RAW 그래프(Line/Bar), FFT(주파수 스펙트럼), Diagonal Vector, PWR 막대의 좌표·아이템 갱신 (모델은 건드리지 않고 win 참조만) |
 | **설정** | `config.py` | 채널 수, FPS, 색상, 오프셋, 스케일 관련 상수 |
 | **부가 I/O** | `logger.py` | CSV 로깅(버퍼 후 일괄 flush) |
 
@@ -91,11 +91,14 @@
 | 위젯/아이템 | 소유 | 역할 |
 |-------------|------|------|
 | `raw_plot` | EMGDashboard | pyqtgraph PlotWidget; RAW 시계열(Line 또는 Bar) |
+| `fft_plot` | EMGDashboard | pyqtgraph PlotWidget; 채널별 FFT 주파수 스펙트럼 |
+| `stacked_plots` | EMGDashboard | RAW/FFT PlotWidget을 전환하는 QStackedWidget (Line/Fill/FFT 라디오와 연동) |
 | `past_lines`, `raw_lines`, `bar_items`, `cursor_rects` | EMGDashboard | 채널별 라인·막대·커서(ScatterPlotItem) |
+| `fft_lines` | EMGDashboard | FFT 플롯에서 채널별 스펙트럼 PlotCurveItem 리스트 |
 | `diag_plot`, `diag_lines` | EMGDashboard | Diagonal Vector 플롯 및 채널별 PlotCurveItem |
 | `pwr_plot`, `bar_item` | EMGDashboard | PWR 막대 1개 BarGraphItem (N_CH+1개: CH0~CH(N-1), AVG) |
 | `cb_port`, `btn_start`, `btn_stop`, `sp_nmult`, `lbl_status` | EMGDashboard | 설정 패널 컨트롤 |
-| `rb_line`, `rb_fill` | EMGDashboard | RAW Line / Fill(Bar) 모드 선택 |
+| `rb_line`, `rb_fill`, `rb_fft` | EMGDashboard | RAW Line / Fill(Bar) / FFT 모드 선택 라디오 버튼 |
 
 ---
 
@@ -118,7 +121,7 @@
 | `__init__` | 버퍼·스케일러·UI 초기화, 워커·타이머·시그널 연결 |
 | `init_ui` | 좌/우 레이아웃, 설정·RAW·Diagonal·PWR 패널 배치 |
 | `build_settings_panel` | 포트, Refresh, START/STOP, Window Size, 상태 라벨 |
-| `build_raw_plot_panel` | RAW 플롯, Line/Fill 라디오, 채널별 라인·막대·커서 |
+| `build_raw_plot_panel` | RAW/FFT 플롯 패널 구성. Line/Fill/FFT 라디오, RAW PlotWidget·FFT PlotWidget, 채널별 라인·막대·커서, QStackedWidget 전환 |
 | `build_diag_panel` | Diagonal Vector 플롯, 가이드 라인, diag_lines N_CH개 |
 | `build_pwr_panel` | PWR PlotWidget, BarGraphItem(N_CH+1), CH0~AVG 틱 |
 | `render` | graph_render.render(win) 호출 |
@@ -140,8 +143,9 @@
 
 | 메서드 | 역할 |
 |--------|------|
-| `render(win)` | is_running·sample_count 확인 후 RAW/Diagonal/PWR 갱신 |
-| `update_raw_graph(win, ...)` | height_buf 계산, Line/Bar 분기, Y 좌표·커서 |
+| `render(win)` | is_running·sample_count 확인 후 `view_mode`에 따라 RAW 또는 FFT 그래프를 갱신하고, 공통으로 Diagonal/PWR 갱신 |
+| `update_raw_graph(win, ...)` | height_buf 계산, Line/Bar 분기, Y 좌표·커서 (RAW 모드에서만 호출) |
+| `update_fft_graph(win)` | RAW 버퍼에서 최근 샘플을 추출해 FFT 수행, 주파수·진폭 스펙트럼을 FFT 플롯에 채널별로 표시 |
 | `update_diag_vector(win)` | 채널별 최근 100샘플, 방향 벡터, diag_lines setData |
 | `update_power_info(win)` | get_vector_intensity → 0~100% 막대 높이·AVG |
 
@@ -171,8 +175,8 @@
 | **1. 기동** | main → EMGDashboard 생성 → init_ui → 타이머 start, refresh_ports |
 | **2. START** | start_serial → 버퍼 초기화, worker.configure·start → run() 진입 |
 | **3. 수신 루프** | SerialWorker: 시리얼 읽기 → 줄 단위 split → parse_line → sample_buf에 누적, n_samples마다 진폭 계산 → sig_sample.emit(raw_vals, last_amp) |
-| **4. UI 수신** | on_sample: raw_np_buf 기록, scale_manager 갱신, ptr·링 버퍼 처리, 1초마다 수신 속도로 버퍼 길이 조정, CSV 기록 |
-| **5. 렌더** | QTimer → render(win) → update_raw_graph, update_diag_vector, update_power_info (is_running·sample_count 확인 후) |
+| **4. UI 수신** | on_sample: raw_np_buf 기록, scale_manager 갱신, ptr·링 버퍼 처리, START 후 FIRST_RESIZE_AFTER_SEC(5초) 시점에 한 번만 수신 속도로 버퍼 길이 재계산·리사이즈, CSV 기록 |
+| **5. 렌더** | QTimer → render(win) → `view_mode`가 `raw`이면 update_raw_graph, `fft`이면 update_fft_graph 호출 후, 공통으로 update_diag_vector·update_power_info 실행 (is_running·sample_count 확인 후) |
 | **6. STOP** | stop_serial → worker.stop·wait, csv_logger.close, set_running_ui(False) |
 
 ---
@@ -239,7 +243,7 @@
 - **좌측 (left_container, QVBoxLayout)**: panel_settings(0), panel_diag(1).
 - **우측 (right_container, QVBoxLayout)**: panel_raw(5), panel_pwr(3).
 - **main_layout**: left_container(1), right_container(2). Margins 15, spacing 15.
-- **RAW 패널**: 카드 내부 — 제목+Line/Fill 라디오(header_layout), raw_plot(1).
+- **RAW/FFT 패널**: 카드 내부 — 제목+Line/Fill/FFT 라디오(header_layout), RAW·FFT PlotWidget을 담는 stacked_plots(1).
 - **PWR 패널**: 카드 내부 — pwr_plot(1), BarGraphItem N_CH+1개(CH0~CH(N-1), AVG).
 
 ---
@@ -266,6 +270,7 @@
 
 - **RAW Line**: 링 버퍼 past/current 구간 분리, get_scaled_array로 Y 계산, 0 근처는 RAW_ZERO_REF(100) 위치에 표시.
 - **RAW Bar**: step=30 구간별 max−min → data_range/2 기준 비율(Line과 동일) → height_buf, BarGraphItem setOpts.
+- **FFT (Frequency)**: RAW 버퍼에서 최근 N샘플(window_sec 기준)을 추출해 FFT 수행, 주파수(Hz) vs 샘플 수로 정규화된 magnitude를 채널별 밴드에 표시. X축 상한은 min(fs/2, FFT_MAX_HZ).
 - **Diagonal Vector**: 4ch는 4방향, 6ch는 6방향(각도 360°/N). 최근 100샘플, get_vector_intensity로 길이·펜 두께·알파.
 - **PWR**: get_vector_intensity → 0~100% 높이, AVG는 N_CH개 채널 비율 평균.
 
@@ -300,11 +305,13 @@
 |------|------|-----|------|------|
 | **공통** | N_CH | 4 | config | 채널 수 초기값. 실제는 START 시 첫 줄에서 4 또는 6 자동 감지 |
 | | FPS | 30 | config | 렌더 주기(Hz), 타이머 간격 = 1000/FPS ms |
-| | PLOT_SEC | 5.0 | config | RAW에 표시할 시간(초). 버퍼 길이 = rate×PLOT_SEC 로 동적 조정 |
-| | max_display | 2000 초기 | dashboard_ui | RAW 링 버퍼·x_axis 샘플 수. 수신 속도에 따라 1초마다 재계산·리사이즈 |
-| | MIN_BUF, MAX_BUF | 100, 100000 | config | 동적 버퍼 길이 하한·상한 |
-| | RATE_UPDATE_INTERVAL | 1.0 | config | 수신 속도 재계산 주기(초) |
-| | BUF_RESIZE_THRESHOLD | 0.15 | config | 현재 버퍼와 이 비율 이상 차이 날 때만 리사이즈 |
+| | PLOT_SEC | 5.0 | config | RAW/FFT에 표시할 시간(초). 목표는 “한 화면 ≈ PLOT_SEC초” |
+| | max_display | 초기: RAW_SAMPLE_RATE_DEFAULT×PLOT_SEC | dashboard_ui | RAW 링 버퍼·x_axis 샘플 수. START 직후 예상 샘플 레이트로 초기화 후, FIRST_RESIZE_AFTER_SEC 시점에 실제 rate×PLOT_SEC로 한 번만 리사이즈 |
+| | MIN_BUF, MAX_BUF | 100, 100000 | config | RAW 링 버퍼 길이 하한·상한 |
+| | RATE_UPDATE_INTERVAL | 1.0 | config | (과거용) 수신 속도 재계산 주기(초). 현재는 FIRST_RESIZE_AFTER_SEC를 사용해 1회만 리사이즈 |
+| | BUF_RESIZE_THRESHOLD | 0.15 | config | (과거용) 비율 차이 임계값. 현재는 초기 1회 리사이즈에는 적용하지 않음 |
+| | FIRST_RESIZE_AFTER_SEC | 5.0 | config | START 후 이 시간(초)이 지난 시점에 실제 수신 속도로 버퍼 길이를 한 번만 재계산·리사이즈 |
+| | RAW_SAMPLE_RATE_DEFAULT | 500 | config | 수신 속도 측정 전 RAW 버퍼 초기 크기를 잡을 때 사용하는 예상 샘플 레이트(Hz) |
 | **시리얼/신호** | BASE_SAMPLES | 5 | config | 진폭 윈도우 기본 샘플 수 |
 | | N_MULT_DEFAULT | 10 | config | n_samples = BASE_SAMPLES * n_mult |
 | | (진폭 계산 주기) | n_samples | serial_worker | n_samples개 들어올 때마다 진폭 재계산 |
@@ -319,6 +326,10 @@
 | | gap_range | 5 | graph_render | Bar 갭 구간 수 |
 | | NO_SIGNAL_VARIATION_RAW | 1.0 | config | Bar 모드: 구간 변동폭 < 이 값이면 최소 높이 |
 | | LINE_HEIGHT_PX | 1.5 | graph_render | 신호 없음 구간 막대 최소 높이 |
+| **FFT** | FFT_WINDOW_SEC | 0.8 | config | FFT에 사용할 시간 창 길이(초) |
+| | FFT_SAMPLE_RATE_DEFAULT | 1000 | config | 수신 속도 측정 전에만 사용하는 FFT 샘플 레이트(Hz) |
+| | FFT_MAX_HZ | 500 | config | FFT X축 최대 표시 주파수(Hz). 실제는 min(fs/2, FFT_MAX_HZ)를 사용 |
+| | FFT_Y_GAIN | 0.3 | config | FFT 진폭 전체 배율 (mag/n_samp × FFT_Y_GAIN) |
 | **Diagonal** | DATA_LEN | 100 | graph_render | 채널당 최근 100샘플 |
 | | diag_plot_limit | 50 | dashboard_ui | diag_plot X/Y 범위 ±50 |
 | | boost_gain | 1.3 | emg_scale | get_vector_intensity 부스트 |
